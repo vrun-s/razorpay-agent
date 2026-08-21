@@ -1,0 +1,7 @@
+# Defer checkout abandonment from initial scope
+
+The original project idea (a chatbot that catches an abandoning customer and offers a retention incentive) centered on checkout abandonment, and it's an explicit Track 3 example. But standard Razorpay Checkout gives no server-visible signal when a customer opens checkout without completing payment — if no payment attempt happens, Razorpay's API/webhooks have no record of it at all. A real abandoned-cart webhook exists, but it's gated to Magic Checkout, a separate dashboard-configured product whose test-mode support is unconfirmed. Building this workflow now would mean either integrating an unverified product mid-hackathon, or fabricating an abandonment reason inside our own simulator — the exact failure mode the original brainstorm already flagged as unreliable.
+
+**Decision**: Ship the initial two workflows as failed-payment recovery (via Payment Links) and halted-subscription recovery — both give the agent full, unshared decision authority through confirmed, ungated Razorpay APIs and webhooks. Checkout abandonment is deferred, not cancelled: revisit once the core engine and these two workflows are solid, using Magic Checkout's abandoned-cart webhook as the entry point (test-mode support to be verified first).
+
+**Consequences**: The idea that started this project isn't in the MVP. A future reader shouldn't assume it was overlooked — it was cut for a specific, documented reason.

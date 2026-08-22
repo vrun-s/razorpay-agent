@@ -60,6 +60,10 @@ The controlled environment that generates revenue-loss cases along with a known 
 **Customer Segment**:
 The underlying persona (e.g. loyal, bargain hunter, new, unreliable payer) the Synthetic Merchant Simulator uses to generate a customer's internally-consistent behavior. Simulator ground truth only — never exposed to the decision engine directly, for the same reason per-case outcome odds aren't: the agent has to infer customer type from Customer History, not be handed the answer.
 
+**Customer Segment Proxy**:
+A small set of discrete buckets the decision engine computes deterministically from observable Customer History fields (order count, average order value, payment-reliability rate) via fixed thresholds. One axis of the recovery-probability estimator's `(failure_reason × customer_segment_proxy × intervention)` cells.
+_Avoid_: Customer Segment (that's the simulator's hidden ground-truth persona; the proxy is a deliberately weaker signal computed from what the engine can actually observe, not a stand-in quietly treated as the real thing)
+
 **Customer History**:
 A customer's own observable record across everything they've done with the merchant — order count, average order value, payment reliability, and responses to past Recovery Cases — independent of any single case. Feeds a Reassessment as context alongside Case History; the two are complementary, not interchangeable.
 

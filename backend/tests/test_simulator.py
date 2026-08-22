@@ -1,0 +1,115 @@
+import ast
+import random
+from pathlib import Path
+
+import pytest
+
+from app.models import Intervention
+from app.simulator.generator import generate_population, resolve_intervention
+from app.simulator.personas import PERSONA_MIX, Persona
+from app.simulator.response_curves import BASE_RESPONSE_CURVES, SIMULATOR_VERSION, decayed_probability
+
+SIMULATOR_DIR = Path(__file__).resolve().parent.parent / "app" / "simulator"
+DECISION_ENGINE_FILE = SIMULATOR_DIR.parent / "decision.py"
+POLICY_ENGINE_FILE = SIMULATOR_DIR.parent / "policy.py"
+
+
+def _imported_module_names(path: Path) -> set[str]:
+    tree = ast.parse(path.read_text(), filename=str(path))
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            names.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            names.add(node.module)
+    return names
+
+
+def test_persona_mix_covers_every_persona_and_sums_to_one():
+    assert set(PERSONA_MIX.keys()) == set(Persona)
+    assert sum(PERSONA_MIX.values()) == pytest.approx(1.0)
+
+
+def test_every_persona_has_a_fully_specified_response_curve():
+    for persona in Persona:
+        curve = BASE_RESPONSE_CURVES[persona]
+        assert set(curve.keys()) == set(Intervention)
+        for probability in curve.values():
+            assert 0.0 < probability < 1.0
+
+
+def test_simulator_version_is_set():
+    assert SIMULATOR_VERSION
+
+
+def test_generate_population_is_deterministic_for_a_fixed_seed():
+    first = generate_population(seed=42, size=25)
+    second = generate_population(seed=42, size=25)
+
+    assert first == second
+
+
+def test_generate_population_differs_across_seeds():
+    a = generate_population(seed=1, size=25)
+    b = generate_population(seed=2, size=25)
+
+    assert a != b
+
+
+def test_generated_case_hidden_ground_truth_covers_every_intervention():
+    [case] = generate_population(seed=7, size=1)
+
+    assert case.hidden.customer_segment in Persona
+    assert set(case.hidden.outcome_odds.keys()) == set(Intervention)
+    for probability in case.hidden.outcome_odds.values():
+        assert 0.0 <= probability <= 1.0
+
+
+def test_persona_mix_is_respected_over_a_large_population():
+    population = generate_population(seed=123, size=4000)
+
+    counts = {persona: 0 for persona in Persona}
+    for case in population:
+        counts[case.hidden.customer_segment] += 1
+
+    for persona, expected_share in PERSONA_MIX.items():
+        observed_share = counts[persona] / len(population)
+        assert observed_share == pytest.approx(expected_share, abs=0.03)
+
+
+def test_fatigue_decay_reduces_probability_monotonically_with_repetition():
+    base = 0.5
+
+    probabilities = [decayed_probability(base, prior_attempts) for prior_attempts in range(5)]
+
+    assert probabilities == sorted(probabilities, reverse=True)
+    assert probabilities[0] == pytest.approx(base)
+    assert all(probability > 0 for probability in probabilities)
+
+
+def test_resolve_intervention_is_deterministic_given_an_rng_seed():
+    [case] = generate_population(seed=3, size=1)
+
+    def draw_outcomes() -> list[bool]:
+        return [
+            resolve_intervention(
+                case, Intervention.PAYMENT_RETRY, prior_attempts_of_this_intervention=i, rng=random.Random(99)
+            )
+            for i in range(3)
+        ]
+
+    assert draw_outcomes() == draw_outcomes()
+
+
+def test_simulator_package_has_no_dependency_on_decision_or_policy_engine_code():
+    """Ticket-02 acceptance criterion: no import from, and not imported by, any Decision Engine code."""
+    for path in SIMULATOR_DIR.glob("*.py"):
+        for name in _imported_module_names(path):
+            assert not name.startswith("app.decision"), f"{path.name} imports Decision Engine code: {name}"
+            assert not name.startswith("app.policy"), f"{path.name} imports Policy Engine code: {name}"
+
+
+def test_decision_and_policy_engines_do_not_import_the_simulator():
+    for path in (DECISION_ENGINE_FILE, POLICY_ENGINE_FILE):
+        for name in _imported_module_names(path):
+            assert not name.startswith("app.simulator"), f"{path.name} imports the simulator: {name}"

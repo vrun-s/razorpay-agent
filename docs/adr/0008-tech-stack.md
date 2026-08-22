@@ -1,0 +1,17 @@
+# Freeze the tech stack before ticket 01
+
+The spec only commits to "FastAPI (Python) + React" — everything below that (persistence, project layout, scheduler, LLM SDK, frontend tooling, testing, local dev/webhook tunnel) was still open, and ticket 01 (tracer bullet) can't sensibly start without it. Deciding these piecemeal per-ticket risks the same shape getting rebuilt mid-build once a later ticket needs something the earlier one didn't anticipate — the reason ticket 03 ("architecture freeze") exists at all is to lock this once, not iteratively.
+
+**Decision**: Solo, full-time, 15-day build — every choice below optimizes for fewest moving parts over headroom for scale that won't be reached in this window.
+
+- **Backend**: `uv` for env/dependency management; `pydantic-settings` loads `.env`.
+- **Project layout**: single repo, plain `backend/` + `frontend/` directories, no monorepo tooling (no Turborepo/Nx/npm workspaces).
+- **Persistence**: SQLite from ticket 01 onward (not in-memory) via **SQLModel** — the same model class serves as the FastAPI request/response schema and the ORM/table definition, avoiding a duplicate model layer. No migrations tool for now: schema changes during the build are destructive (drop + `SQLModel.metadata.create_all()` fresh); staying on SQLModel's standard declarative models keeps the door open to adding Alembic later without a rewrite, if the schema needs to survive real data across a change.
+- **DB access**: sync (not async) SQLAlchemy/SQLModel sessions — FastAPI handles sync route bodies natively, and demo-scale volumes (hundreds of cases) never approach where async DB access would matter.
+- **Scheduled sweep** (ADR-0005's response-window timeout trigger): a plain in-process `asyncio` background task, not APScheduler or Celery+Redis — no separate broker/worker to run or explain in a demo.
+- **LLM**: Anthropic Claude via the `anthropic` Python SDK for ticket 08's three fixed, bounded roles (failure-reason diagnosis, audit-trail narration, escalation flagging). Model tier is decided at ticket 08, not here. Requires `ANTHROPIC_API_KEY` added to `.env`.
+- **Frontend**: Vite + React + TypeScript (SPA — no Next.js SSR/routing, which an internal dashboard doesn't need). TanStack Query for server state (case list, timeline, budget); no Redux/Zustand. Live dashboard updates via polling (`refetchInterval`), not WebSocket/SSE. Tailwind CSS for styling.
+- **Testing**: `pytest` for the backend. No dedicated frontend test framework for now — the spec's own "what makes a good test here" section is entirely about backend-observable behavior (Executor calls, case state, Policy Engine allow/reject), and the 15-day window is better spent there.
+- **Local dev / webhook tunnel**: `ssh -R 80:localhost:PORT nokey@localhost.run`, re-registered in the Razorpay dashboard each dev session (the URL is ephemeral, resets per tunnel run). No ngrok account exists; `.env`'s current `RAZORPAY_WEBHOOK_URL` is a stale value from a prior session and needs refreshing before first live use.
+
+**Consequences**: Every choice trades scale/robustness headroom for build speed and fewer things to configure or explain — appropriate for a 15-day solo demo, not a production system. The one deliberately-preserved escape hatch is Alembic: SQLite + SQLModel with standard declarative models means adding real migrations later is additive, not a rewrite, if a later ticket needs schema changes to survive data that already exists.

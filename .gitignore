@@ -1,8 +1,20 @@
 /.agents
 /.claude
 
-*.json
+/skills-lock.json
 
 .env
 .env.*
 !.env.example
+
+# Backend (Python / uv)
+backend/.venv
+backend/**/__pycache__
+backend/**/*.pyc
+backend/*.db
+backend/.pytest_cache
+
+# Frontend (Node)
+frontend/node_modules
+frontend/dist
+frontend/.vite

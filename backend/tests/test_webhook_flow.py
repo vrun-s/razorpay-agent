@@ -3,33 +3,11 @@ a Recovery Case is created, decided, policy-checked, and executed against the
 fake Gateway -- and shows up via GET /cases with its recorded outcome.
 """
 
-
-def _synthetic_payment_failed_payload(payment_id: str = "pay_test123") -> dict:
-    return {
-        "entity": "event",
-        "event": "payment.failed",
-        "contains": ["payment"],
-        "payload": {
-            "payment": {
-                "entity": {
-                    "id": payment_id,
-                    "amount": 50000,
-                    "currency": "INR",
-                    "status": "failed",
-                    "order_id": "order_test123",
-                    "email": "customer@example.com",
-                    "contact": "+911234567890",
-                    "error_code": "BAD_REQUEST_ERROR",
-                    "error_description": "Payment failed due to insufficient funds",
-                }
-            }
-        },
-        "created_at": 1735689600,
-    }
+from tests.conftest import post_signed_webhook, synthetic_payment_failed_payload as _synthetic_payment_failed_payload
 
 
 def test_payment_failed_webhook_creates_a_case_with_recorded_execution(client):
-    response = client.post("/webhooks/payment-failed", json=_synthetic_payment_failed_payload())
+    response = post_signed_webhook(client, "/webhooks/payment-failed", _synthetic_payment_failed_payload())
 
     assert response.status_code == 200
     case = response.json()
@@ -46,7 +24,7 @@ def test_payment_failed_webhook_creates_a_case_with_recorded_execution(client):
 
 
 def test_created_case_is_visible_via_list_cases_with_its_outcome(client):
-    post_response = client.post("/webhooks/payment-failed", json=_synthetic_payment_failed_payload())
+    post_response = post_signed_webhook(client, "/webhooks/payment-failed", _synthetic_payment_failed_payload())
     case_id = post_response.json()["id"]
 
     list_response = client.get("/cases")
@@ -59,15 +37,16 @@ def test_created_case_is_visible_via_list_cases_with_its_outcome(client):
 
 
 def test_malformed_payload_is_rejected(client):
-    response = client.post("/webhooks/payment-failed", json={"event": "payment.failed", "payload": {}})
+    response = post_signed_webhook(client, "/webhooks/payment-failed", {"event": "payment.failed", "payload": {}})
 
     assert response.status_code == 400
 
 
 def test_wrong_event_type_is_rejected(client):
-    response = client.post(
+    response = post_signed_webhook(
+        client,
         "/webhooks/payment-failed",
-        json={"event": "payment.captured", "payload": {"payment": {"entity": {"id": "pay_1"}}}},
+        {"event": "payment.captured", "payload": {"payment": {"entity": {"id": "pay_1"}}}},
     )
 
     assert response.status_code == 400

@@ -13,6 +13,7 @@ from app.models import (
     CaseHistoryEntryType,
     EventSource,
     Intervention,
+    ProcessedWebhookEvent,
     RecoveryCase,
     WorkflowType,
 )
@@ -23,9 +24,12 @@ def _log(session: Session, case: RecoveryCase, entry_type: CaseHistoryEntryType,
     session.add(CaseHistoryEntry(case_id=case.id, entry_type=entry_type, summary=summary, data=data or {}))
 
 
-def create_case_from_failed_payment(session: Session, gateway: Gateway, payment: dict[str, Any]) -> RecoveryCase:
+def create_case_from_failed_payment(
+    session: Session, gateway: Gateway, payment: dict[str, Any], event_id: str
+) -> RecoveryCase:
     case = RecoveryCase(workflow_type=WorkflowType.FAILED_PAYMENT, source=EventSource.SIMULATED)
     session.add(case)
+    session.add(ProcessedWebhookEvent(event_id=event_id, case_id=case.id))
 
     _log(
         session,

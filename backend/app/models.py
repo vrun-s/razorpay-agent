@@ -74,3 +74,11 @@ class RecoveryCase(SQLModel, table=True):
         back_populates="case",
         sa_relationship_kwargs={"order_by": "CaseHistoryEntry.created_at", "cascade": "all, delete-orphan"},
     )
+
+
+class ProcessedWebhookEvent(SQLModel, table=True):
+    """Dedup record for `x-razorpay-event-id` (ticket 04) -- a repeated event id is a no-op."""
+
+    event_id: str = Field(primary_key=True)
+    case_id: str = Field(foreign_key="recoverycase.id", index=True)
+    received_at: datetime = Field(default_factory=_now)

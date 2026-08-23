@@ -18,17 +18,7 @@ Ticket 01 (tracer bullet) and ticket 02 (simulator generator) are done, and ever
   ```
   `PaymentLinkResult`, `ResumeChargeResult`, and `ParsedWebhookEvent` are frozen dataclasses; their fields (`payment_link_id`/`short_url`/`status`, `subscription_id`/`status`, `event`/`payload`) are part of the frozen shape. `FakeGateway` (simulator-driven) and the future real-Razorpay gateway (ticket 13) both satisfy this same `Protocol` — the recovery engine's core code (`app/intake.py` and whatever replaces it) only ever depends on `Gateway`, never on which implementation it holds.
 
-- **Policy Engine contract** (intended, ahead of ticket 05 — `app/policy.py` today is ticket 01's pass-through stub) — `validate(case: RecoveryCase, intervention: Intervention, policy: PolicyConfig) -> PolicyResult`, where `PolicyConfig` is the merchant-defined constraint set (`max_discount_pct`, `max_incentive_amount`, `max_payment_retries`, `max_halted_recovery_attempts`, `max_interventions_per_customer`, escalation thresholds — spec user stories 23–25). `PolicyResult` gains two fields beyond today's stub shape to satisfy user story 27 ("record the rejection: which constraint, what was proposed instead of executed"):
-  ```python
-  @dataclass(frozen=True)
-  class PolicyResult:
-      approved: bool
-      intervention: Intervention              # as proposed by the Decision Engine
-      violated_constraint: str | None = None  # e.g. "max_payment_retries"; None iff approved
-      fallback_intervention: Intervention | None = None  # what actually executes on rejection
-      reason: str | None = None               # human-readable, for the audit trail
-  ```
-  The `evaluate()` name and three-field shape in today's stub are ticket 01 scaffolding, not the frozen contract — ticket 05 implements `validate()` against the shape above.
+- **Policy Engine contract** — **superseded by [[0010-policy-engine-validate-contract]]**, written when ticket 05 implemented this against the sketch below and found it didn't fit (no field here carries a discount/incentive value to check, and `fallback_intervention` contradicts ticket 05's "rejected outright, never downgraded" rule). Left here for history only; treat ADR-0010 as current. Original sketch (intended, ahead of ticket 05 — `app/policy.py` was ticket 01's pass-through stub): `validate(case: RecoveryCase, intervention: Intervention, policy: PolicyConfig) -> PolicyResult`, where `PolicyConfig` is the merchant-defined constraint set (`max_discount_pct`, `max_incentive_amount`, `max_payment_retries`, `max_halted_recovery_attempts`, `max_interventions_per_customer`, escalation thresholds — spec user stories 23–25), and `PolicyResult` added `violated_constraint` and `fallback_intervention` fields to the stub's three.
 
 - **Decision Engine interface** (intended, ahead of ticket 07 — `app/decision.py` today is ticket 01's fixed-rule stub) — per [[0006-decision-engine-estimator]], the estimator consumes Case History (already on `RecoveryCase.history`) and Customer History, plus an LLM-diagnosed `failure_reason` for failed-payment cases, and returns a point estimate *and* an explicit uncertainty measure — never the point estimate alone, since the streaming allocator ([[0003-streaming-allocation]]) needs both:
   ```python

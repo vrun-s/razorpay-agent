@@ -17,7 +17,7 @@ from app.models import (
     RecoveryCase,
     WorkflowType,
 )
-from app.policy import evaluate
+from app.policy import DEFAULT_POLICY_CONFIG, ProposedIntervention, validate
 
 
 def _log(session: Session, case: RecoveryCase, entry_type: CaseHistoryEntryType, summary: str, data: dict[str, Any] | None = None) -> None:
@@ -48,13 +48,19 @@ def create_case_from_failed_payment(
         {"intervention": intervention.value},
     )
 
-    policy_result = evaluate(case, intervention)
+    policy_result = validate(case, ProposedIntervention(intervention=intervention), DEFAULT_POLICY_CONFIG)
     _log(
         session,
         case,
         CaseHistoryEntryType.POLICY_CHECK,
         f"Policy Engine {'approved' if policy_result.approved else 'rejected'} {intervention.value}",
-        {"approved": policy_result.approved, "intervention": intervention.value, "reason": policy_result.reason},
+        {
+            "approved": policy_result.approved,
+            "intervention": intervention.value,
+            "violated_constraint": policy_result.violated_constraint,
+            "proposed_value": policy_result.proposed_value,
+            "reason": policy_result.reason,
+        },
     )
 
     if policy_result.approved and intervention == Intervention.PAYMENT_RETRY:
@@ -70,7 +76,12 @@ def create_case_from_failed_payment(
             case,
             CaseHistoryEntryType.EXECUTION,
             f"Gateway created payment link {result.payment_link_id}",
-            {"payment_link_id": result.payment_link_id, "short_url": result.short_url, "status": result.status},
+            {
+                "payment_link_id": result.payment_link_id,
+                "short_url": result.short_url,
+                "status": result.status,
+                "intervention": intervention.value,
+            },
         )
 
     session.commit()

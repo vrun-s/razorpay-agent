@@ -7,7 +7,7 @@ from tests.conftest import post_signed_webhook, synthetic_payment_failed_payload
 def test_rejected_proposal_audit_entry_names_constraint_and_rejected_value(client, monkeypatch):
     # Force a rejection on the very first (only) attempt by dropping the retry ceiling to 0.
     monkeypatch.setattr(
-        "app.intake.DEFAULT_POLICY_CONFIG",
+        "app.lifecycle.DEFAULT_POLICY_CONFIG",
         PolicyConfig(max_discount_pct=20.0, max_payment_retries=0, max_interventions_per_customer=5, recovery_budget=10_000_00),
     )
 

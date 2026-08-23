@@ -10,6 +10,12 @@ class Settings(BaseSettings):
 
     database_url: str = "sqlite:///./recovery.db"
 
+    # ADR-0005: how long an OPEN case waits for an outcome before the
+    # scheduled sweep treats silence as a reassessment trigger, and how
+    # often that sweep runs.
+    response_window_seconds: int = 3600
+    sweep_interval_seconds: int = 300
+
     razorpay_key_id: str | None = None
     razorpay_key_secret: str | None = None
     razorpay_webhook_secret: str | None = None

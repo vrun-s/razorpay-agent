@@ -1,0 +1,183 @@
+"""Case lifecycle: the reassessment loop (ticket 06, ADR-0004/0005).
+
+A Recovery Case is a persistent sequence, not a one-shot decision: every
+trigger -- case creation, an outcome-relevant webhook, or a Response Window
+timeout -- runs the same decide -> policy check -> maybe execute cycle via
+`run_decision_cycle`, and Case History accumulates across all of them.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime, timedelta, timezone
+from typing import Any
+
+from sqlmodel import Session, select
+
+from app.config import settings
+from app.decision import decide, expected_effect
+from app.gateway import Gateway
+from app.models import (
+    CaseHistoryEntry,
+    CaseHistoryEntryType,
+    CaseStatus,
+    Intervention,
+    ProcessedWebhookEvent,
+    RecoveryCase,
+)
+from app.policy import DEFAULT_POLICY_CONFIG, PolicyConfig, ProposedIntervention, validate
+
+# Policy constraints that bound the *length* of a case's sequence (ADR-0004):
+# once exceeded, no future proposal on this case can ever comply again (the
+# count only grows), so the case is force-stopped rather than left open to
+# be rejected identically on every future cycle.
+_SEQUENCE_BOUND_CONSTRAINTS = {"max_payment_retries", "max_interventions_per_customer"}
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def log_entry(
+    session: Session, case: RecoveryCase, entry_type: CaseHistoryEntryType, summary: str, data: dict[str, Any] | None = None
+) -> None:
+    """Appends one Case History entry. Shared by intake.py (case creation) and this module."""
+    session.add(CaseHistoryEntry(case_id=case.id, entry_type=entry_type, summary=summary, data=data or {}))
+
+
+def run_decision_cycle(
+    session: Session,
+    gateway: Gateway,
+    case: RecoveryCase,
+    *,
+    payment: dict[str, Any] | None = None,
+    policy: PolicyConfig | None = None,
+) -> RecoveryCase:
+    """Runs one Reassessment: decide -> sequence-bound check -> policy check -> maybe execute.
+
+    Called for a case's first decision (at creation) and every subsequent
+    reassessment (webhook or scheduled-sweep triggered) alike -- there is no
+    separate "first decision" code path.
+    """
+    payment = payment or {}
+    policy = policy or DEFAULT_POLICY_CONFIG
+
+    intervention = decide(case)
+    effect = expected_effect(case, intervention)
+    log_entry(
+        session,
+        case,
+        CaseHistoryEntryType.DECISION,
+        f"Decision Engine proposed {intervention.value}",
+        {"intervention": intervention.value, "expected_effect": effect},
+    )
+
+    proposal = ProposedIntervention(intervention=intervention)
+    policy_result = validate(case, proposal, policy)
+    log_entry(
+        session,
+        case,
+        CaseHistoryEntryType.POLICY_CHECK,
+        f"Policy Engine {'approved' if policy_result.approved else 'rejected'} {intervention.value}",
+        {
+            "approved": policy_result.approved,
+            "intervention": intervention.value,
+            "violated_constraint": policy_result.violated_constraint,
+            "proposed_value": policy_result.proposed_value,
+            "reason": policy_result.reason,
+        },
+    )
+
+    if not policy_result.approved and policy_result.violated_constraint in _SEQUENCE_BOUND_CONSTRAINTS:
+        _stop_case(session, case, reason=policy_result.reason or f"{policy_result.violated_constraint} exceeded")
+        session.commit()
+        session.refresh(case)
+        return case
+
+    if policy_result.approved and intervention == Intervention.PAYMENT_RETRY:
+        result = gateway.create_payment_link(
+            case_id=case.id,
+            amount=payment.get("amount", 0),
+            currency=payment.get("currency", "INR"),
+            description=f"Complete your payment for order {payment.get('order_id', '')}",
+            customer_contact={"email": payment.get("email", ""), "contact": payment.get("contact", "")},
+        )
+        log_entry(
+            session,
+            case,
+            CaseHistoryEntryType.EXECUTION,
+            f"Gateway created payment link {result.payment_link_id}",
+            {
+                "payment_link_id": result.payment_link_id,
+                "short_url": result.short_url,
+                "status": result.status,
+                "intervention": intervention.value,
+            },
+        )
+
+    if case.status == CaseStatus.OPEN:
+        case.response_window_expires_at = _now() + timedelta(seconds=settings.response_window_seconds)
+        session.add(case)
+
+    session.commit()
+    session.refresh(case)
+    return case
+
+
+def _stop_case(session: Session, case: RecoveryCase, *, reason: str) -> None:
+    case.status = CaseStatus.STOPPED
+    case.response_window_expires_at = None
+    session.add(case)
+    log_entry(session, case, CaseHistoryEntryType.CASE_STOPPED, f"Case stopped: {reason}", {"reason": reason})
+
+
+def record_processed_event(session: Session, event_id: str, case: RecoveryCase) -> None:
+    """Dedup bookkeeping only, for a webhook that turned out to be a no-op (e.g. an already-resolved case)."""
+    session.add(ProcessedWebhookEvent(event_id=event_id, case_id=case.id))
+    session.commit()
+
+
+def mark_recovered(session: Session, case: RecoveryCase, event_id: str, *, reason: str) -> RecoveryCase:
+    """Closes a case as recovered -- a real outcome arrived, so no further Reassessment is needed.
+
+    Records the triggering webhook's dedup entry in the same commit as the
+    state transition, exactly like intake.py's case creation -- one atomic
+    write, not two.
+    """
+    session.add(ProcessedWebhookEvent(event_id=event_id, case_id=case.id))
+    case.status = CaseStatus.RECOVERED
+    case.response_window_expires_at = None
+    session.add(case)
+    log_entry(session, case, CaseHistoryEntryType.CASE_RECOVERED, f"Case recovered: {reason}", {"reason": reason})
+    session.commit()
+    session.refresh(case)
+    return case
+
+
+def due_cases(session: Session, *, now: datetime | None = None) -> list[RecoveryCase]:
+    """OPEN cases whose Response Window has elapsed with no outcome (ADR-0005)."""
+    now = now or _now()
+    statement = select(RecoveryCase).where(
+        RecoveryCase.status == CaseStatus.OPEN,
+        RecoveryCase.response_window_expires_at.is_not(None),
+        RecoveryCase.response_window_expires_at <= now,
+    )
+    return list(session.exec(statement).all())
+
+
+def run_sweep(
+    session: Session, gateway: Gateway, *, now: datetime | None = None, policy: PolicyConfig | None = None
+) -> list[RecoveryCase]:
+    """The scheduled-sweep trigger (ADR-0005): reassess every case whose silence is now itself a signal."""
+    policy = policy or DEFAULT_POLICY_CONFIG
+    cases = due_cases(session, now=now)
+    for case in cases:
+        log_entry(
+            session,
+            case,
+            CaseHistoryEntryType.REASSESSMENT_TRIGGERED,
+            "Response Window elapsed with no outcome",
+            {"trigger": "scheduled_sweep"},
+        )
+        session.commit()
+        run_decision_cycle(session, gateway, case, policy=policy)
+    return cases

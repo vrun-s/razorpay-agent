@@ -46,6 +46,9 @@ class CaseHistoryEntryType(StrEnum):
     DECISION = "decision"
     POLICY_CHECK = "policy_check"
     EXECUTION = "execution"
+    REASSESSMENT_TRIGGERED = "reassessment_triggered"
+    CASE_RECOVERED = "case_recovered"
+    CASE_STOPPED = "case_stopped"
 
 
 class CaseHistoryEntry(SQLModel, table=True):
@@ -69,6 +72,15 @@ class RecoveryCase(SQLModel, table=True):
     status: CaseStatus = Field(default=CaseStatus.OPEN)
     source: EventSource = Field(default=EventSource.SIMULATED)
     created_at: datetime = Field(default_factory=_now)
+
+    # The Razorpay payment/subscription id this case is about -- lets an
+    # outcome webhook (e.g. payment.captured) find its case (ticket 06).
+    external_reference_id: str | None = Field(default=None, index=True)
+
+    # When the case's current intervention is expected to produce an outcome
+    # by (ADR-0005's Response Window); the scheduled sweep reassesses any
+    # OPEN case past this with no outcome yet. None once resolved.
+    response_window_expires_at: datetime | None = Field(default=None, index=True)
 
     history: list[CaseHistoryEntry] = Relationship(
         back_populates="case",

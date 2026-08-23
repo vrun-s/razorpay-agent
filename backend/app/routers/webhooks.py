@@ -2,13 +2,14 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from app.config import settings
 from app.db import get_session
 from app.gateway import Gateway, get_gateway
 from app.intake import create_case_from_failed_payment
-from app.models import ProcessedWebhookEvent, RecoveryCase
+from app.lifecycle import mark_recovered, record_processed_event
+from app.models import CaseStatus, ProcessedWebhookEvent, RecoveryCase
 from app.schemas import RecoveryCaseRead
 from app.webhook_security import InvalidWebhookSignatureError, verify
 
@@ -19,6 +20,13 @@ def _extract_failed_payment(payload: dict[str, Any]) -> dict[str, Any]:
     payment = payload.get("payload", {}).get("payment", {}).get("entity")
     if not payment or not payment.get("id"):
         raise HTTPException(status_code=400, detail="malformed payment.failed payload: missing payload.payment.entity")
+    return payment
+
+
+def _extract_captured_payment(payload: dict[str, Any]) -> dict[str, Any]:
+    payment = payload.get("payload", {}).get("payment", {}).get("entity")
+    if not payment or not payment.get("id"):
+        raise HTTPException(status_code=400, detail="malformed payment.captured payload: missing payload.payment.entity")
     return payment
 
 
@@ -50,6 +58,11 @@ def _case_for_processed_event(session: Session, event_id: str) -> RecoveryCase |
     return session.get(RecoveryCase, processed.case_id)
 
 
+def _case_for_payment(session: Session, payment_id: str) -> RecoveryCase | None:
+    statement = select(RecoveryCase).where(RecoveryCase.external_reference_id == payment_id)
+    return session.exec(statement).first()
+
+
 @router.post("/payment-failed", response_model=RecoveryCaseRead)
 async def payment_failed(
     request: Request,
@@ -77,3 +90,35 @@ async def payment_failed(
     # keeping the blocking SQLModel session work consistent with ADR-0008.
     case = await run_in_threadpool(create_case_from_failed_payment, session, gateway, payment, event_id)
     return case
+
+
+@router.post("/payment-captured", response_model=RecoveryCaseRead)
+async def payment_captured(
+    request: Request,
+    session: Session = Depends(get_session),
+    gateway: Gateway = Depends(get_gateway),
+) -> RecoveryCase:
+    """The outcome-relevant webhook (ADR-0005): a payment succeeding closes its
+    Recovery Case as recovered immediately, without waiting for the next sweep.
+    """
+    raw_body = await request.body()
+    event_id = _verify_and_get_event_id(request, raw_body)
+
+    already_processed_case = await run_in_threadpool(_case_for_processed_event, session, event_id)
+    if already_processed_case is not None:
+        return already_processed_case
+
+    parsed = gateway.parse_webhook(headers=dict(request.headers), raw_body=raw_body)
+    if parsed.event != "payment.captured":
+        raise HTTPException(status_code=400, detail=f"expected event 'payment.captured', got {parsed.event!r}")
+
+    payment = _extract_captured_payment(parsed.payload)
+    case = await run_in_threadpool(_case_for_payment, session, payment["id"])
+    if case is None:
+        raise HTTPException(status_code=404, detail=f"no Recovery Case found for payment {payment['id']!r}")
+
+    if case.status != CaseStatus.OPEN:
+        await run_in_threadpool(record_processed_event, session, event_id, case)
+        return case  # already resolved -- a later/duplicate capture event is a no-op.
+
+    return await run_in_threadpool(mark_recovered, session, case, event_id, reason=f"payment {payment['id']} captured")

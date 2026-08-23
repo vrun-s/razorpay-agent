@@ -14,7 +14,8 @@ from typing import Any
 from sqlmodel import Session, select
 
 from app.config import settings
-from app.decision import decide, expected_effect
+from app.decision import DecisionInput, decide, resolve_cell_key, resolve_last_decided_cell_key
+from app.estimator import CustomerHistory, get_estimator
 from app.gateway import Gateway
 from app.models import (
     CaseHistoryEntry,
@@ -35,6 +36,16 @@ _SEQUENCE_BOUND_CONSTRAINTS = {"max_payment_retries", "max_interventions_per_cus
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _customer_history_from_payment(payment: dict[str, Any]) -> CustomerHistory:
+    """Ticket-07 stopgap: no real Customer History tracking exists yet (no
+    cross-case customer identity -- the same disclosed gap ADR-0010 notes for
+    `max_interventions_per_customer`), so this derives a single-order proxy
+    from the payment the case is about. A real Customer History source is
+    future work, not this ticket's.
+    """
+    return CustomerHistory(order_count=1, avg_order_value=payment.get("amount", 0), payment_reliability_rate=0.5)
 
 
 def log_entry(
@@ -61,14 +72,24 @@ def run_decision_cycle(
     payment = payment or {}
     policy = policy or DEFAULT_POLICY_CONFIG
 
-    intervention = decide(case)
-    effect = expected_effect(case, intervention)
+    decision_input = DecisionInput(case=case, customer_history=_customer_history_from_payment(payment))
+    decision_output = decide(decision_input)
+    intervention = decision_output.intervention
+    cell_key = resolve_cell_key(decision_input, intervention)
     log_entry(
         session,
         case,
         CaseHistoryEntryType.DECISION,
         f"Decision Engine proposed {intervention.value}",
-        {"intervention": intervention.value, "expected_effect": effect},
+        {
+            "intervention": intervention.value,
+            "point_estimate": decision_output.point_estimate,
+            "uncertainty": decision_output.uncertainty,
+            "failure_reason": cell_key.failure_reason,
+            "customer_segment_proxy": cell_key.customer_segment_proxy.value,
+            "justification": decision_output.justification,
+            "escalate": decision_output.escalate,
+        },
     )
 
     proposal = ProposedIntervention(intervention=intervention)
@@ -139,6 +160,10 @@ def record_processed_event(session: Session, event_id: str, case: RecoveryCase) 
 def mark_recovered(session: Session, case: RecoveryCase, event_id: str, *, reason: str) -> RecoveryCase:
     """Closes a case as recovered -- a real outcome arrived, so no further Reassessment is needed.
 
+    Feeds the outcome back into the estimator's cell for whatever intervention
+    was last proposed (ADR-0006's online update rule) -- excluded entirely
+    for a `real`-tagged case, per the estimator's own source check.
+
     Records the triggering webhook's dedup entry in the same commit as the
     state transition, exactly like intake.py's case creation -- one atomic
     write, not two.
@@ -148,6 +173,11 @@ def mark_recovered(session: Session, case: RecoveryCase, event_id: str, *, reaso
     case.response_window_expires_at = None
     session.add(case)
     log_entry(session, case, CaseHistoryEntryType.CASE_RECOVERED, f"Case recovered: {reason}", {"reason": reason})
+
+    cell_key = resolve_last_decided_cell_key(case)
+    if cell_key is not None:
+        get_estimator().update(cell_key, source=case.source, success=True)
+
     session.commit()
     session.refresh(case)
     return case

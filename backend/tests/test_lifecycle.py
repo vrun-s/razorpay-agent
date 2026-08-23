@@ -2,7 +2,6 @@
 
 from datetime import datetime, timedelta, timezone
 
-from app.decision import FATIGUE_DECAY_RATE, expected_effect
 from app.gateway import FakeGateway
 from app.lifecycle import due_cases, run_decision_cycle, run_sweep
 from app.models import (
@@ -67,15 +66,21 @@ def test_case_under_the_limit_is_not_stopped(session):
     assert result.response_window_expires_at is not None
 
 
-def test_repeating_payment_retry_shows_reduced_expected_effect(session):
+def test_decision_entry_records_the_estimator_cell_used(session):
+    # Ticket 06's own fatigue stopgap (decision.expected_effect) is gone as
+    # promised, superseded by ticket 07's real estimator; case-local fatigue
+    # re-weighting on top of the (cross-case) posterior is a disclosed gap
+    # for a later ticket, not reintroduced here. This checks the DECISION
+    # entry now carries the estimator's cell (segment/failure_reason) instead.
     case = RecoveryCase(workflow_type=WorkflowType.FAILED_PAYMENT)
-    first_attempt_effect = expected_effect(case, Intervention.PAYMENT_RETRY)
 
-    case_after_one_retry = _case_with_prior_payment_retries(session, count=1)
-    second_attempt_effect = expected_effect(case_after_one_retry, Intervention.PAYMENT_RETRY)
+    result = run_decision_cycle(session, FakeGateway(), case)
 
-    assert second_attempt_effect < first_attempt_effect
-    assert second_attempt_effect == first_attempt_effect * FATIGUE_DECAY_RATE
+    decision_entry = next(e for e in result.history if e.entry_type == CaseHistoryEntryType.DECISION)
+    assert decision_entry.data["customer_segment_proxy"]
+    assert decision_entry.data["failure_reason"]
+    assert decision_entry.data["point_estimate"] == 0.5
+    assert decision_entry.data["uncertainty"] > 0
 
 
 def test_scheduled_sweep_reassesses_a_case_past_its_response_window(session):

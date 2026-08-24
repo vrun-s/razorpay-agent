@@ -34,3 +34,31 @@ def create_case_from_failed_payment(
     session.refresh(case)
 
     return run_decision_cycle(session, gateway, case, payment=payment)
+
+
+def create_case_from_halted_subscription(
+    session: Session, gateway: Gateway, subscription: dict[str, Any], event_id: str
+) -> RecoveryCase:
+    """Ticket 12: proves [[0002-pluggable-workflow-abstraction]] for real -- the
+    second workflow's detector, reusing the same engine (run_decision_cycle)
+    matured on failed-payment rather than a parallel bespoke pipeline.
+    """
+    case = RecoveryCase(
+        workflow_type=WorkflowType.HALTED_SUBSCRIPTION,
+        source=EventSource.SIMULATED,
+        external_reference_id=subscription.get("id"),
+    )
+    session.add(case)
+    session.add(ProcessedWebhookEvent(event_id=event_id, case_id=case.id))
+
+    log_entry(
+        session,
+        case,
+        CaseHistoryEntryType.CASE_CREATED,
+        f"Recovery Case created from subscription.halted for subscription {subscription.get('id')}",
+        {"subscription_id": subscription.get("id"), "plan_id": subscription.get("plan_id")},
+    )
+    session.commit()
+    session.refresh(case)
+
+    return run_decision_cycle(session, gateway, case, payment=subscription)

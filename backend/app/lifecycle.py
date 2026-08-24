@@ -47,6 +47,13 @@ def _customer_history_from_payment(payment: dict[str, Any]) -> CustomerHistory:
     `max_interventions_per_customer`), so this derives a single-order proxy
     from the payment the case is about. A real Customer History source is
     future work, not this ticket's.
+
+    Disclosed gap (ticket 12): Razorpay's Subscription entity carries no
+    `amount` field (that lives on the Plan, referenced only by `plan_id`), so
+    a halted-subscription case's `avg_order_value` -- and, via the same
+    `payment.get("amount", 0)` read in run_decision_cycle's `case_value` --
+    its escalation_value_threshold check, always resolve to 0. Deriving a
+    real value would need a Plan lookup this ticket doesn't add.
     """
     return CustomerHistory(order_count=1, avg_order_value=payment.get("amount", 0), payment_reliability_rate=0.5)
 
@@ -215,6 +222,19 @@ def run_decision_cycle(
             {
                 "payment_link_id": result.payment_link_id,
                 "short_url": result.short_url,
+                "status": result.status,
+                "intervention": intervention.value,
+            },
+        )
+    elif policy_result.approved and funded and intervention == Intervention.RESUME_CHARGE:
+        result = gateway.resume_charge(case_id=case.id, subscription_id=case.external_reference_id or "")
+        log_entry(
+            session,
+            case,
+            CaseHistoryEntryType.EXECUTION,
+            f"Gateway resumed charge for subscription {result.subscription_id}",
+            {
+                "subscription_id": result.subscription_id,
                 "status": result.status,
                 "intervention": intervention.value,
             },

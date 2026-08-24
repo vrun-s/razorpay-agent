@@ -120,6 +120,16 @@ def test_halted_subscription_never_gets_a_diagnosed_failure_reason(session):
     assert decision_entry.data["failure_reason"] == "unknown"
 
 
+def test_halted_subscription_case_executes_resume_charge_not_payment_retry(session):
+    case = RecoveryCase(workflow_type=WorkflowType.HALTED_SUBSCRIPTION, external_reference_id="sub_lifecycle1")
+
+    result = run_decision_cycle(session, FakeGateway(), case, llm_client=FakeLLMClient())
+
+    execution_entry = next(e for e in result.history if e.entry_type == CaseHistoryEntryType.EXECUTION)
+    assert execution_entry.data["intervention"] == Intervention.RESUME_CHARGE.value
+    assert execution_entry.data["subscription_id"] == "sub_lifecycle1"
+
+
 def test_decision_entry_carries_an_llm_generated_justification(session):
     case = RecoveryCase(workflow_type=WorkflowType.FAILED_PAYMENT)
 

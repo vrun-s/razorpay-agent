@@ -74,3 +74,46 @@ def synthetic_payment_failed_payload(payment_id: str = "pay_test123", order_id: 
         },
         "created_at": 1735689600,
     }
+
+
+def synthetic_subscription_halted_payload(subscription_id: str = "sub_test123", plan_id: str = "plan_test123") -> dict[str, Any]:
+    """Razorpay's documented `subscription.halted` schema -- the Subscription entity
+    under `payload.subscription.entity`, reached only after Razorpay's own three
+    automatic retries are already exhausted (CONTEXT.md: Resume Charge)."""
+    return {
+        "entity": "event",
+        "event": "subscription.halted",
+        "contains": ["subscription"],
+        "payload": {
+            "subscription": {
+                "entity": {
+                    "id": subscription_id,
+                    "entity": "subscription",
+                    "plan_id": plan_id,
+                    "customer_id": "cust_test123",
+                    "status": "halted",
+                    "current_start": 1735689600,
+                    "current_end": 1738368000,
+                    "ended_at": None,
+                    "quantity": 1,
+                    "notes": {},
+                    "charge_at": 1735689600,
+                    "start_at": 1733011200,
+                    "end_at": 1893456000,
+                    "auth_attempts": 3,
+                    "total_count": 12,
+                    "paid_count": 3,
+                    "customer_notify": True,
+                    "created_at": 1730000000,
+                    "short_url": "https://rzp.io/i/test_short_url",
+                    "has_scheduled_changes": False,
+                    "change_scheduled_at": None,
+                    "source": "api",
+                    "payment_method": "card",
+                    "offer_id": None,
+                    "remaining_count": 9,
+                }
+            }
+        },
+        "created_at": 1735689600,
+    }

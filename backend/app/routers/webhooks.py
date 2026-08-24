@@ -7,7 +7,7 @@ from sqlmodel import Session, select
 from app.config import settings
 from app.db import get_session
 from app.gateway import Gateway, get_gateway
-from app.intake import create_case_from_failed_payment
+from app.intake import create_case_from_failed_payment, create_case_from_halted_subscription
 from app.lifecycle import mark_recovered, record_processed_event
 from app.models import CaseStatus, ProcessedWebhookEvent, RecoveryCase
 from app.schemas import RecoveryCaseRead
@@ -28,6 +28,15 @@ def _extract_captured_payment(payload: dict[str, Any]) -> dict[str, Any]:
     if not payment or not payment.get("id"):
         raise HTTPException(status_code=400, detail="malformed payment.captured payload: missing payload.payment.entity")
     return payment
+
+
+def _extract_halted_subscription(payload: dict[str, Any]) -> dict[str, Any]:
+    subscription = payload.get("payload", {}).get("subscription", {}).get("entity")
+    if not subscription or not subscription.get("id"):
+        raise HTTPException(
+            status_code=400, detail="malformed subscription.halted payload: missing payload.subscription.entity"
+        )
+    return subscription
 
 
 def _verify_and_get_event_id(request: Request, raw_body: bytes) -> str:
@@ -89,6 +98,40 @@ async def payment_failed(
     # Off the event loop: same thread FastAPI would use for a sync `def` route,
     # keeping the blocking SQLModel session work consistent with ADR-0008.
     case = await run_in_threadpool(create_case_from_failed_payment, session, gateway, payment, event_id)
+    return case
+
+
+@router.post("/subscription-halted", response_model=RecoveryCaseRead)
+async def subscription_halted(
+    request: Request,
+    session: Session = Depends(get_session),
+    gateway: Gateway = Depends(get_gateway),
+) -> RecoveryCase:
+    """Verifies a `subscription.halted` webhook and creates a Recovery Case (ticket 12).
+
+    Hardened the same way ticket 04 hardened payment.failed -- real HMAC-SHA256
+    verification and x-razorpay-event-id dedupe -- and reuses the same case
+    store, lifecycle, and engine (ADR-0002); no separate pipeline.
+
+    Disclosed gap (out of ticket 12's scope): unlike payment.failed, there is
+    no outcome-relevant webhook route here (a `subscription.charged` analog
+    to /payment-captured) -- a halted-subscription case only exits via the
+    scheduled sweep's reassessment or a human's escalation override, never a
+    fresh success webhook closing it immediately.
+    """
+    raw_body = await request.body()
+    event_id = _verify_and_get_event_id(request, raw_body)
+
+    existing_case = await run_in_threadpool(_case_for_processed_event, session, event_id)
+    if existing_case is not None:
+        return existing_case
+
+    parsed = gateway.parse_webhook(headers=dict(request.headers), raw_body=raw_body)
+    if parsed.event != "subscription.halted":
+        raise HTTPException(status_code=400, detail=f"expected event 'subscription.halted', got {parsed.event!r}")
+
+    subscription = _extract_halted_subscription(parsed.payload)
+    case = await run_in_threadpool(create_case_from_halted_subscription, session, gateway, subscription, event_id)
     return case
 
 

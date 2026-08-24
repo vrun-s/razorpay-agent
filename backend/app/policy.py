@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from app.decision import VALID_INTERVENTIONS
 from app.models import CaseHistoryEntryType, Intervention, RecoveryCase
 
 
@@ -66,6 +67,18 @@ def validate(
     case_value: int = 0,
 ) -> PolicyResult:
     escalate = policy.escalation_value_threshold is not None and case_value >= policy.escalation_value_threshold
+
+    # ADR-0002/ADR-0009 (spec story 28): each workflow declares its own valid
+    # Intervention subset -- checked first, since a violation here means the
+    # proposal doesn't even belong to this case's workflow, before any
+    # economic constraint is meaningful to evaluate against it.
+    if proposal.intervention not in VALID_INTERVENTIONS[case.workflow_type]:
+        return _reject(
+            proposal,
+            "invalid_intervention_for_workflow",
+            reason=f"{proposal.intervention.value} is not valid for workflow {case.workflow_type.value}",
+            escalate=escalate,
+        )
 
     if proposal.discount_pct > policy.max_discount_pct:
         return _reject(
@@ -130,7 +143,12 @@ def _prior_executions_of(case: RecoveryCase, intervention: Intervention) -> int:
 
 
 def _reject(
-    proposal: ProposedIntervention, constraint: str, *, proposed_value: float | int, reason: str, escalate: bool = False
+    proposal: ProposedIntervention,
+    constraint: str,
+    *,
+    proposed_value: float | int | None = None,
+    reason: str,
+    escalate: bool = False,
 ) -> PolicyResult:
     return PolicyResult(
         approved=False,

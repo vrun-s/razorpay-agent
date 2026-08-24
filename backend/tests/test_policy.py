@@ -72,7 +72,9 @@ def test_max_interventions_per_customer_blocks_a_proposal_over_the_limit(session
     case = _case_with_prior_executions(
         session, [Intervention.PAYMENT_RETRY, Intervention.PAYMENT_RETRY, Intervention.RESUME_CHARGE]
     )
-    proposal = ProposedIntervention(intervention=Intervention.RESUME_CHARGE)
+    # NO_ACTION (not PAYMENT_RETRY) so this proposal only trips the
+    # per-customer count, not max_payment_retries as a side effect.
+    proposal = ProposedIntervention(intervention=Intervention.NO_ACTION)
 
     result = validate(case, proposal, _POLICY)
 
@@ -139,6 +141,26 @@ def test_no_escalation_threshold_configured_never_flags_escalation():
     result = validate(case, proposal, _POLICY, case_value=10_000_000)
 
     assert result.escalate is False
+
+
+def test_payment_retry_is_rejected_as_invalid_for_a_halted_subscription_case():
+    case = RecoveryCase(workflow_type=WorkflowType.HALTED_SUBSCRIPTION)
+    proposal = ProposedIntervention(intervention=Intervention.PAYMENT_RETRY)
+
+    result = validate(case, proposal, _POLICY)
+
+    assert result.approved is False
+    assert result.violated_constraint == "invalid_intervention_for_workflow"
+
+
+def test_resume_charge_is_rejected_as_invalid_for_a_failed_payment_case():
+    case = _new_case()
+    proposal = ProposedIntervention(intervention=Intervention.RESUME_CHARGE)
+
+    result = validate(case, proposal, _POLICY)
+
+    assert result.approved is False
+    assert result.violated_constraint == "invalid_intervention_for_workflow"
 
 
 def test_escalation_flag_survives_a_rejected_proposal():

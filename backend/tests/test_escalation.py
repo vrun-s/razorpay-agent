@@ -1,5 +1,6 @@
 """Ticket 09: escalation queue + human override, exercised end-to-end via the API."""
 
+from app.models import CaseStatus, RecoveryCase, WorkflowType
 from app.policy import PolicyConfig
 from tests.conftest import post_signed_webhook, synthetic_payment_failed_payload
 
@@ -47,6 +48,18 @@ def test_override_rejects_an_intervention_invalid_for_the_workflow(client, monke
     case = _escalate_via_policy_threshold(client, monkeypatch)
 
     response = client.post(f"/cases/{case['id']}/override", json={"intervention": "resume_charge"})
+
+    assert response.status_code == 400
+
+
+def test_override_rejects_payment_retry_for_a_halted_subscription_case(client, session):
+    # Ticket 12: the reverse direction of test_override_rejects_an_intervention_invalid_for_the_workflow.
+    case = RecoveryCase(workflow_type=WorkflowType.HALTED_SUBSCRIPTION, status=CaseStatus.ESCALATED)
+    session.add(case)
+    session.commit()
+    session.refresh(case)
+
+    response = client.post(f"/cases/{case.id}/override", json={"intervention": "payment_retry"})
 
     assert response.status_code == 400
 

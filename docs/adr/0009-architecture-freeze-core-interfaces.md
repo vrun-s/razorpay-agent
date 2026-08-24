@@ -38,6 +38,6 @@ Ticket 01 (tracer bullet) and ticket 02 (simulator generator) are done, and ever
 
   def decide(input: DecisionInput) -> DecisionOutput
   ```
-  `CustomerHistory` and the `customer_segment_proxy` threshold logic are new types ticket 07 introduces; this ADR fixes only the input/output envelope around them, not their internals.
+  `CustomerHistory` and the `customer_segment_proxy` threshold logic are new types ticket 07 introduces; this ADR fixes only the input/output envelope around them, not their internals. `DecisionInput`'s `qualitative_signal` field is **superseded by [[0011-decision-input-qualitative-signal]]**, written when ticket 08 needed a slot for the LLM escalation flag's input that this sketch didn't have.
 
 **Consequences**: Tickets 04–18 build against these five shapes as given, not as something each ticket is free to redesign. Where a stub's current shape (`policy.evaluate`, `decision.decide`) differs from the frozen intended contract, the implementing ticket (05, 07) is expected to converge on the shape documented here rather than inventing a new one — and if a later ticket finds this ADR's shape genuinely doesn't work, that's a new ADR superseding the relevant part of this one, not a silent signature change.

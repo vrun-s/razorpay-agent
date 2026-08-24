@@ -17,6 +17,7 @@ from app.config import settings
 from app.decision import DecisionInput, decide, resolve_cell_key, resolve_last_decided_cell_key
 from app.estimator import CustomerHistory, get_estimator
 from app.gateway import Gateway
+from app.llm import LLMClient, get_llm_client
 from app.models import (
     CaseHistoryEntry,
     CaseHistoryEntryType,
@@ -24,6 +25,7 @@ from app.models import (
     Intervention,
     ProcessedWebhookEvent,
     RecoveryCase,
+    WorkflowType,
 )
 from app.policy import DEFAULT_POLICY_CONFIG, PolicyConfig, ProposedIntervention, validate
 
@@ -48,6 +50,34 @@ def _customer_history_from_payment(payment: dict[str, Any]) -> CustomerHistory:
     return CustomerHistory(order_count=1, avg_order_value=payment.get("amount", 0), payment_reliability_rate=0.5)
 
 
+def _decline_text(payment: dict[str, Any]) -> str | None:
+    """The unstructured decline text/bank code a payment.failed webhook carries
+    (ticket 08, spec story 18) -- None if the payload has neither field, e.g.
+    a scheduled-sweep reassessment that runs with no fresh payment at all."""
+    error_code = payment.get("error_code")
+    error_description = payment.get("error_description")
+    if not error_code and not error_description:
+        return None
+    return f"{error_code or ''}: {error_description or ''}".strip(": ")
+
+
+def _failure_reason_for_case(case: RecoveryCase, payment: dict[str, Any], llm_client: LLMClient) -> str | None:
+    """LLM-diagnosed `failure_reason`, failed_payment workflow only (ADR-0009).
+
+    A fresh decline text this cycle is re-diagnosed; otherwise (e.g. a
+    scheduled-sweep reassessment with no payment payload) the case's own
+    most recent DECISION entry already carries a diagnosis to reuse -- no
+    need to re-derive it from nothing.
+    """
+    if case.workflow_type != WorkflowType.FAILED_PAYMENT:
+        return None
+    decline_text = _decline_text(payment)
+    if decline_text:
+        return llm_client.diagnose_failure_reason(decline_text=decline_text)
+    last_cell = resolve_last_decided_cell_key(case)
+    return last_cell.failure_reason if last_cell else None
+
+
 def log_entry(
     session: Session, case: RecoveryCase, entry_type: CaseHistoryEntryType, summary: str, data: dict[str, Any] | None = None
 ) -> None:
@@ -62,18 +92,31 @@ def run_decision_cycle(
     *,
     payment: dict[str, Any] | None = None,
     policy: PolicyConfig | None = None,
+    llm_client: LLMClient | None = None,
+    qualitative_signal: str | None = None,
 ) -> RecoveryCase:
     """Runs one Reassessment: decide -> sequence-bound check -> policy check -> maybe execute.
 
     Called for a case's first decision (at creation) and every subsequent
     reassessment (webhook or scheduled-sweep triggered) alike -- there is no
     separate "first decision" code path.
+
+    `qualitative_signal` (ticket 08's escalation-flag input) has no real
+    source yet -- no support/chat channel exists in the pipeline -- so every
+    caller today leaves it None; a future ticket wires a real one in.
     """
     payment = payment or {}
     policy = policy or DEFAULT_POLICY_CONFIG
+    llm_client = llm_client or get_llm_client()
 
-    decision_input = DecisionInput(case=case, customer_history=_customer_history_from_payment(payment))
-    decision_output = decide(decision_input)
+    failure_reason = _failure_reason_for_case(case, payment, llm_client)
+    decision_input = DecisionInput(
+        case=case,
+        customer_history=_customer_history_from_payment(payment),
+        failure_reason=failure_reason,
+        qualitative_signal=qualitative_signal,
+    )
+    decision_output = decide(decision_input, llm_client=llm_client)
     intervention = decision_output.intervention
     cell_key = resolve_cell_key(decision_input, intervention)
     log_entry(

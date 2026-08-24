@@ -21,5 +21,7 @@ class Settings(BaseSettings):
     razorpay_webhook_secret: str | None = None
     razorpay_webhook_url: str | None = None
 
+    anthropic_api_key: str | None = None
+
 
 settings = Settings()

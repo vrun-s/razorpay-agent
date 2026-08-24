@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 from app.gateway import FakeGateway
 from app.lifecycle import due_cases, run_decision_cycle, run_sweep
+from app.llm import FakeLLMClient
 from app.models import (
     CaseHistoryEntry,
     CaseHistoryEntryType,
@@ -81,6 +82,50 @@ def test_decision_entry_records_the_estimator_cell_used(session):
     assert decision_entry.data["failure_reason"]
     assert decision_entry.data["point_estimate"] == 0.5
     assert decision_entry.data["uncertainty"] > 0
+
+
+def test_failure_reason_is_diagnosed_from_the_payments_decline_text(session):
+    case = RecoveryCase(workflow_type=WorkflowType.FAILED_PAYMENT)
+    payment = {"amount": 50_000, "error_code": "BAD_REQUEST_ERROR", "error_description": "insufficient funds in account"}
+
+    result = run_decision_cycle(session, FakeGateway(), case, payment=payment, llm_client=FakeLLMClient())
+
+    decision_entry = next(e for e in result.history if e.entry_type == CaseHistoryEntryType.DECISION)
+    assert decision_entry.data["failure_reason"] == "insufficient_funds"
+
+
+def test_failure_reason_diagnosis_is_reused_when_a_later_cycle_has_no_decline_text(session):
+    case = RecoveryCase(workflow_type=WorkflowType.FAILED_PAYMENT)
+    payment = {"amount": 50_000, "error_code": "BAD_REQUEST_ERROR", "error_description": "card expired"}
+    run_decision_cycle(session, FakeGateway(), case, payment=payment, llm_client=FakeLLMClient())
+    session.refresh(case)
+
+    # A later reassessment (e.g. scheduled sweep) with no fresh payment payload
+    # still has a diagnosis to fall back on -- the first cycle's own.
+    result = run_decision_cycle(session, FakeGateway(), case, llm_client=FakeLLMClient())
+
+    decisions = [e for e in result.history if e.entry_type == CaseHistoryEntryType.DECISION]
+    assert decisions[-1].data["failure_reason"] == "expired_card"
+
+
+def test_halted_subscription_never_gets_a_diagnosed_failure_reason(session):
+    case = RecoveryCase(workflow_type=WorkflowType.HALTED_SUBSCRIPTION)
+    # error_code/description are meaningless for this workflow even if present.
+    payment = {"error_code": "X", "error_description": "insufficient funds"}
+
+    result = run_decision_cycle(session, FakeGateway(), case, payment=payment, llm_client=FakeLLMClient())
+
+    decision_entry = next(e for e in result.history if e.entry_type == CaseHistoryEntryType.DECISION)
+    assert decision_entry.data["failure_reason"] == "unknown"
+
+
+def test_decision_entry_carries_an_llm_generated_justification(session):
+    case = RecoveryCase(workflow_type=WorkflowType.FAILED_PAYMENT)
+
+    result = run_decision_cycle(session, FakeGateway(), case, llm_client=FakeLLMClient())
+
+    decision_entry = next(e for e in result.history if e.entry_type == CaseHistoryEntryType.DECISION)
+    assert isinstance(decision_entry.data["justification"], str) and decision_entry.data["justification"]
 
 
 def test_scheduled_sweep_reassesses_a_case_past_its_response_window(session):

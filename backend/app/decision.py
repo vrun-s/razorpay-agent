@@ -1,4 +1,4 @@
-"""Decision Engine (ticket 07, ADR-0009/ADR-0006).
+"""Decision Engine (ticket 07/08, ADR-0009/ADR-0006).
 
 `decide()` picks the intervention -- among the workflow's valid subset,
 per [[0002-pluggable-workflow-abstraction]] -- with the highest posterior
@@ -7,10 +7,11 @@ greedy choice by design, not an oversight: exploration under uncertainty is
 the Streaming Allocator's job (ticket 10), not this function's -- the spec's
 Out of Scope list rules out a separate exploration algorithm here.
 
-`justification` and `escalate` are ticket-08 stopgaps: real values, not
-`None`, but not yet LLM-produced. Ticket 08 replaces their production
-without changing this envelope, and must leave `point_estimate`/`uncertainty`
-bit-for-bit untouched (its own acceptance criteria requires this).
+`justification` and `escalate` are ticket-08's LLM-bounded roles
+(app/llm.py's `LLMClient`) -- generated strictly *after*
+`point_estimate`/`uncertainty` are read from the estimator, from values
+already fixed at that point, so no LLM step can ever touch them (ticket 08's
+own acceptance criteria requires this bit-for-bit guarantee).
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from app.estimator import CustomerHistory, CustomerSegmentProxy, EstimatorCellKey, customer_segment_proxy, get_estimator
+from app.llm import LLMClient, get_llm_client
 from app.models import CaseHistoryEntryType, Intervention, RecoveryCase, WorkflowType
 
 _UNKNOWN_FAILURE_REASON = "unknown"
@@ -37,6 +39,7 @@ class DecisionInput:
     case: RecoveryCase
     customer_history: CustomerHistory
     failure_reason: str | None = None  # LLM-diagnosed (ticket 08); failed_payment workflow only
+    qualitative_signal: str | None = None  # LLM escalation-flag input (ADR-0011); no real source wired yet
 
 
 @dataclass(frozen=True)
@@ -44,8 +47,8 @@ class DecisionOutput:
     intervention: Intervention
     point_estimate: float  # the chosen intervention's Beta-Bernoulli posterior mean
     uncertainty: float  # its credible interval width
-    justification: str  # ticket-08 stopgap: not yet LLM-generated
-    escalate: bool  # ticket-08 stopgap: not yet LLM-flagged, always False
+    justification: str  # LLM-generated (ticket 08)
+    escalate: bool  # LLM-flagged qualitative escalation signal (ticket 08)
 
 
 def resolve_cell_key(input: DecisionInput, intervention: Intervention) -> EstimatorCellKey:
@@ -83,23 +86,36 @@ def resolve_last_decided_cell_key(case: RecoveryCase) -> EstimatorCellKey | None
     )
 
 
-def decide(input: DecisionInput) -> DecisionOutput:
+def decide(input: DecisionInput, *, llm_client: LLMClient | None = None) -> DecisionOutput:
+    llm_client = llm_client or get_llm_client()
     estimator = get_estimator()
     candidates = VALID_INTERVENTIONS[input.case.workflow_type]
     best_intervention = max(
         candidates, key=lambda intervention: estimator.estimate(resolve_cell_key(input, intervention)).point_estimate
     )
+    # point_estimate/uncertainty are fixed here, before any LLM call below --
+    # nothing from this point on can feed back into them.
     estimate = estimator.estimate(resolve_cell_key(input, best_intervention))
+    point_estimate = estimate.point_estimate
+    uncertainty = estimate.uncertainty
     segment = customer_segment_proxy(input.customer_history)
     failure_reason = input.failure_reason or _UNKNOWN_FAILURE_REASON
 
+    justification = llm_client.generate_justification(
+        intervention=best_intervention.value,
+        point_estimate=point_estimate,
+        uncertainty=uncertainty,
+        segment=segment.value,
+        failure_reason=failure_reason,
+    )
+    escalate = (
+        llm_client.flag_escalation(signal_text=input.qualitative_signal) if input.qualitative_signal else False
+    )
+
     return DecisionOutput(
         intervention=best_intervention,
-        point_estimate=estimate.point_estimate,
-        uncertainty=estimate.uncertainty,
-        justification=(
-            f"Estimated {estimate.point_estimate:.0%} recovery probability for {best_intervention.value} "
-            f"({segment.value} segment, {failure_reason} failure reason)."
-        ),
-        escalate=False,
+        point_estimate=point_estimate,
+        uncertainty=uncertainty,
+        justification=justification,
+        escalate=escalate,
     )

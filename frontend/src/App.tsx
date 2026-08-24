@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { fetchCases, type CaseHistoryEntry, type RecoveryCase } from './api'
+import { EscalationQueue } from './EscalationQueue'
 
 const STATUS_STYLES: Record<RecoveryCase['status'], string> = {
   open: 'bg-blue-100 text-blue-800',
@@ -57,6 +58,8 @@ function App() {
       {cases && cases.length === 0 && (
         <p className="mt-8 text-gray-500">No Recovery Cases yet. POST a synthetic payment.failed payload to create one.</p>
       )}
+
+      {cases && <EscalationQueue cases={cases} />}
 
       <div className="mt-6 space-y-4">
         {cases?.map((recoveryCase) => (

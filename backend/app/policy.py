@@ -22,6 +22,9 @@ class PolicyConfig:
     max_payment_retries: int
     max_interventions_per_customer: int
     recovery_budget: int  # smallest currency unit (paise), same convention as Payment.amount
+    # ADR-0012: story 25's "cases above a certain value are routed to a
+    # human" -- paise, same convention as recovery_budget. None disables it.
+    escalation_value_threshold: int | None = None
 
 
 DEFAULT_POLICY_CONFIG = PolicyConfig(
@@ -29,6 +32,7 @@ DEFAULT_POLICY_CONFIG = PolicyConfig(
     max_payment_retries=3,
     max_interventions_per_customer=5,
     recovery_budget=1_000_000,  # INR 10,000 in paise
+    escalation_value_threshold=None,
 )
 
 
@@ -48,6 +52,9 @@ class PolicyResult:
     violated_constraint: str | None = None
     proposed_value: float | int | None = None  # the specific value that violated the constraint
     reason: str | None = None
+    # ADR-0012: orthogonal to `approved` -- a compliant proposal on a
+    # high-value case still escalates, and a rejected one can too.
+    escalate: bool = False
 
 
 def validate(
@@ -56,13 +63,17 @@ def validate(
     policy: PolicyConfig = DEFAULT_POLICY_CONFIG,
     *,
     budget_spent_so_far: int = 0,
+    case_value: int = 0,
 ) -> PolicyResult:
+    escalate = policy.escalation_value_threshold is not None and case_value >= policy.escalation_value_threshold
+
     if proposal.discount_pct > policy.max_discount_pct:
         return _reject(
             proposal,
             "max_discount_pct",
             proposed_value=proposal.discount_pct,
             reason=f"discount_pct {proposal.discount_pct} exceeds max_discount_pct {policy.max_discount_pct}",
+            escalate=escalate,
         )
 
     if proposal.intervention == Intervention.PAYMENT_RETRY:
@@ -73,6 +84,7 @@ def validate(
                 "max_payment_retries",
                 proposed_value=attempt_number,
                 reason=f"attempt {attempt_number} exceeds max_payment_retries {policy.max_payment_retries}",
+                escalate=escalate,
             )
 
     # Case ~ customer for now: no cross-case customer identity exists yet, so
@@ -87,6 +99,7 @@ def validate(
                 f"intervention {intervention_number} exceeds "
                 f"max_interventions_per_customer {policy.max_interventions_per_customer}"
             ),
+            escalate=escalate,
         )
 
     projected_spend = budget_spent_so_far + proposal.incentive_amount
@@ -96,9 +109,10 @@ def validate(
             "recovery_budget",
             proposed_value=projected_spend,
             reason=f"projected spend {projected_spend} exceeds recovery_budget {policy.recovery_budget}",
+            escalate=escalate,
         )
 
-    return PolicyResult(approved=True, intervention=proposal.intervention)
+    return PolicyResult(approved=True, intervention=proposal.intervention, escalate=escalate)
 
 
 def _total_prior_executions(case: RecoveryCase) -> int:
@@ -116,7 +130,7 @@ def _prior_executions_of(case: RecoveryCase, intervention: Intervention) -> int:
 
 
 def _reject(
-    proposal: ProposedIntervention, constraint: str, *, proposed_value: float | int, reason: str
+    proposal: ProposedIntervention, constraint: str, *, proposed_value: float | int, reason: str, escalate: bool = False
 ) -> PolicyResult:
     return PolicyResult(
         approved=False,
@@ -124,4 +138,5 @@ def _reject(
         violated_constraint=constraint,
         proposed_value=proposed_value,
         reason=reason,
+        escalate=escalate,
     )

@@ -49,6 +49,7 @@ class CaseHistoryEntryType(StrEnum):
     REASSESSMENT_TRIGGERED = "reassessment_triggered"
     CASE_RECOVERED = "case_recovered"
     CASE_STOPPED = "case_stopped"
+    CASE_ESCALATED = "case_escalated"
 
 
 class CaseHistoryEntry(SQLModel, table=True):

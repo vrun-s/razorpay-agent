@@ -102,3 +102,56 @@ def test_a_rejected_proposal_is_not_downgraded_to_a_compliant_value():
     # The rejected intervention/value are echoed back unchanged, never substituted.
     assert result.intervention is Intervention.PAYMENT_RETRY
     assert result.proposed_value == 99.0
+
+
+def test_case_value_at_or_above_escalation_threshold_is_flagged_for_escalation():
+    policy = PolicyConfig(
+        max_discount_pct=10.0, max_payment_retries=2, max_interventions_per_customer=3,
+        recovery_budget=1000, escalation_value_threshold=50_000,
+    )
+    case = _new_case()
+    proposal = ProposedIntervention(intervention=Intervention.PAYMENT_RETRY)
+
+    result = validate(case, proposal, policy, case_value=50_000)
+
+    assert result.escalate is True
+    # Escalation is orthogonal to approval -- a compliant proposal still executes.
+    assert result.approved is True
+
+
+def test_case_value_below_escalation_threshold_is_not_flagged():
+    policy = PolicyConfig(
+        max_discount_pct=10.0, max_payment_retries=2, max_interventions_per_customer=3,
+        recovery_budget=1000, escalation_value_threshold=50_000,
+    )
+    case = _new_case()
+    proposal = ProposedIntervention(intervention=Intervention.PAYMENT_RETRY)
+
+    result = validate(case, proposal, policy, case_value=49_999)
+
+    assert result.escalate is False
+
+
+def test_no_escalation_threshold_configured_never_flags_escalation():
+    case = _new_case()
+    proposal = ProposedIntervention(intervention=Intervention.PAYMENT_RETRY)
+
+    result = validate(case, proposal, _POLICY, case_value=10_000_000)
+
+    assert result.escalate is False
+
+
+def test_escalation_flag_survives_a_rejected_proposal():
+    # A proposal can be both over-threshold (escalate) and independently
+    # rejected on another constraint -- the two are orthogonal signals.
+    policy = PolicyConfig(
+        max_discount_pct=10.0, max_payment_retries=2, max_interventions_per_customer=3,
+        recovery_budget=1000, escalation_value_threshold=50_000,
+    )
+    case = _new_case()
+    proposal = ProposedIntervention(intervention=Intervention.PAYMENT_RETRY, discount_pct=99.0)
+
+    result = validate(case, proposal, policy, case_value=50_000)
+
+    assert result.approved is False
+    assert result.escalate is True

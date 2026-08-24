@@ -2,6 +2,7 @@
 
 from datetime import datetime, timedelta, timezone
 
+from app.allocator import BudgetLedger, StreamingAllocator
 from app.gateway import FakeGateway
 from app.lifecycle import due_cases, override_case, resolve_case_manually, run_decision_cycle, run_sweep
 from app.llm import FakeLLMClient
@@ -256,6 +257,55 @@ def test_manual_resolve_as_recovered_closes_the_case(session):
     recovered_entry = next(e for e in result.history if e.entry_type == CaseHistoryEntryType.CASE_RECOVERED)
     assert recovered_entry.data["reason"] == "customer paid over the phone"
     assert recovered_entry.data["resolved_by"] == "human"
+
+
+# --- Ticket 10: Streaming Allocator wiring --------------------------------
+
+
+def test_allocation_check_entry_is_logged_before_execution_when_the_allocator_funds(session):
+    case = RecoveryCase(workflow_type=WorkflowType.FAILED_PAYMENT)
+
+    result = run_decision_cycle(session, FakeGateway(), case)
+
+    entry_types = [e.entry_type for e in result.history]
+    allocation_entry = next(e for e in result.history if e.entry_type == CaseHistoryEntryType.ALLOCATION_CHECK)
+    assert allocation_entry.data["funded"] is True
+    assert entry_types.index(CaseHistoryEntryType.ALLOCATION_CHECK) < entry_types.index(CaseHistoryEntryType.EXECUTION)
+
+
+def test_allocator_decline_prevents_execution_and_leaves_the_case_open(session):
+    case = RecoveryCase(workflow_type=WorkflowType.FAILED_PAYMENT)
+    # Artificial: live proposals carry no incentive cost yet (disclosed gap in
+    # app/allocator.py), so provoking a decline means starting the
+    # allocator's own ledger already past its ceiling, not a realistic
+    # in-flow scarcity scenario.
+    ledger = BudgetLedger(recovery_budget=100, reserve_ratio=0.3, spent=101)
+    allocator = StreamingAllocator(ledger)
+
+    result = run_decision_cycle(session, FakeGateway(), case, allocator=allocator)
+
+    assert result.status == CaseStatus.OPEN
+    assert result.response_window_expires_at is not None
+    allocation_entry = next(e for e in result.history if e.entry_type == CaseHistoryEntryType.ALLOCATION_CHECK)
+    assert allocation_entry.data["funded"] is False
+    assert CaseHistoryEntryType.EXECUTION not in [e.entry_type for e in result.history]
+
+
+def test_allocator_ledger_spent_is_threaded_into_the_policy_engines_recovery_budget_check(session):
+    case = RecoveryCase(workflow_type=WorkflowType.FAILED_PAYMENT)
+    ledger = BudgetLedger(recovery_budget=1000, reserve_ratio=0.3, spent=1001)  # already over its own ceiling
+    allocator = StreamingAllocator(ledger)
+    policy = PolicyConfig(
+        max_discount_pct=20.0, max_payment_retries=3, max_interventions_per_customer=5, recovery_budget=1000
+    )
+
+    result = run_decision_cycle(session, FakeGateway(), case, policy=policy, allocator=allocator)
+
+    policy_check = next(e for e in result.history if e.entry_type == CaseHistoryEntryType.POLICY_CHECK)
+    assert policy_check.data["approved"] is False
+    assert policy_check.data["violated_constraint"] == "recovery_budget"
+    # Policy rejected outright -- the allocator is never even consulted.
+    assert CaseHistoryEntryType.ALLOCATION_CHECK not in [e.entry_type for e in result.history]
 
 
 def test_manual_resolve_as_stopped_closes_the_case(session):

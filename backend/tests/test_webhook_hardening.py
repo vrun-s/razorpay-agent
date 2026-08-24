@@ -55,8 +55,8 @@ def test_replaying_the_same_event_id_does_not_create_a_second_case(client):
 
     cases = client.get("/cases").json()
     assert len(cases) == 1
-    # A no-op replay never re-runs decide -> policy -> execute for the same case.
-    assert len(cases[0]["history"]) == 4
+    # A no-op replay never re-runs decide -> policy -> allocate -> execute for the same case.
+    assert len(cases[0]["history"]) == 5
 
 
 def test_different_event_ids_create_separate_cases(client):

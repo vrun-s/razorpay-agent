@@ -13,6 +13,7 @@ from typing import Any
 
 from sqlmodel import Session, select
 
+from app.allocator import AllocationCandidate, StreamingAllocator, get_allocator
 from app.config import settings
 from app.decision import VALID_INTERVENTIONS, DecisionInput, decide, resolve_cell_key, resolve_last_decided_cell_key
 from app.estimator import CustomerHistory, get_estimator
@@ -94,8 +95,9 @@ def run_decision_cycle(
     policy: PolicyConfig | None = None,
     llm_client: LLMClient | None = None,
     qualitative_signal: str | None = None,
+    allocator: StreamingAllocator | None = None,
 ) -> RecoveryCase:
-    """Runs one Reassessment: decide -> sequence-bound check -> policy check -> maybe execute.
+    """Runs one Reassessment: decide -> sequence-bound check -> policy check -> allocation check -> maybe execute.
 
     Called for a case's first decision (at creation) and every subsequent
     reassessment (webhook or scheduled-sweep triggered) alike -- there is no
@@ -108,6 +110,7 @@ def run_decision_cycle(
     payment = payment or {}
     policy = policy or DEFAULT_POLICY_CONFIG
     llm_client = llm_client or get_llm_client()
+    allocator = allocator or get_allocator()
 
     failure_reason = _failure_reason_for_case(case, payment, llm_client)
     decision_input = DecisionInput(
@@ -136,7 +139,9 @@ def run_decision_cycle(
     )
 
     proposal = ProposedIntervention(intervention=intervention)
-    policy_result = validate(case, proposal, policy, case_value=payment.get("amount", 0))
+    policy_result = validate(
+        case, proposal, policy, budget_spent_so_far=allocator.ledger.spent, case_value=payment.get("amount", 0)
+    )
     log_entry(
         session,
         case,
@@ -169,7 +174,32 @@ def run_decision_cycle(
         session.refresh(case)
         return case
 
-    if policy_result.approved and intervention == Intervention.PAYMENT_RETRY:
+    allocation_decision = None
+    if policy_result.approved:
+        allocation_decision = allocator.decide(
+            AllocationCandidate(
+                case_id=case.id,
+                point_estimate=decision_output.point_estimate,
+                uncertainty=decision_output.uncertainty,
+                incentive_amount=proposal.incentive_amount,
+            )
+        )
+        log_entry(
+            session,
+            case,
+            CaseHistoryEntryType.ALLOCATION_CHECK,
+            f"Streaming Allocator {'funded' if allocation_decision.funded else 'declined'} {intervention.value}",
+            {
+                "funded": allocation_decision.funded,
+                "reason": allocation_decision.reason,
+                "spent": allocation_decision.spent,
+                "available": allocation_decision.available,
+                "reserved": allocation_decision.reserved,
+            },
+        )
+
+    funded = allocation_decision is not None and allocation_decision.funded
+    if policy_result.approved and funded and intervention == Intervention.PAYMENT_RETRY:
         result = gateway.create_payment_link(
             case_id=case.id,
             amount=payment.get("amount", 0),

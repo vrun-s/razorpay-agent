@@ -8,6 +8,7 @@ export type CaseHistoryEntryType =
   | 'case_created'
   | 'decision'
   | 'policy_check'
+  | 'allocation_check'
   | 'execution'
   | 'reassessment_triggered'
   | 'case_recovered'

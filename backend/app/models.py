@@ -45,6 +45,7 @@ class CaseHistoryEntryType(StrEnum):
     CASE_CREATED = "case_created"
     DECISION = "decision"
     POLICY_CHECK = "policy_check"
+    ALLOCATION_CHECK = "allocation_check"
     EXECUTION = "execution"
     REASSESSMENT_TRIGGERED = "reassessment_triggered"
     CASE_RECOVERED = "case_recovered"

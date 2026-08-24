@@ -16,7 +16,7 @@ def test_payment_failed_webhook_creates_a_case_with_recorded_execution(client):
     assert case["source"] == "simulated"
 
     entry_types = [entry["entry_type"] for entry in case["history"]]
-    assert entry_types == ["case_created", "decision", "policy_check", "execution"]
+    assert entry_types == ["case_created", "decision", "policy_check", "allocation_check", "execution"]
 
     execution = case["history"][-1]
     assert execution["data"]["status"] == "created"

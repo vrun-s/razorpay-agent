@@ -1,6 +1,7 @@
 import json
 from typing import Any
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
@@ -8,6 +9,7 @@ from sqlmodel import Session, SQLModel, create_engine
 
 from app.config import settings
 from app.db import get_session
+from app.gateway import RazorpayGateway
 from app.main import app
 from app.webhook_security import sign
 
@@ -37,6 +39,12 @@ def client(session):
 def webhook_secret(monkeypatch):
     """Fixes the webhook secret for tests, independent of whatever is in .env."""
     monkeypatch.setattr(settings, "razorpay_webhook_secret", TEST_WEBHOOK_SECRET)
+
+
+def mock_razorpay_client(handler) -> httpx.Client:
+    """An httpx.Client wired to a MockTransport, standing in for Razorpay itself
+    -- shared by every RazorpayGateway test so none of them hit the network."""
+    return httpx.Client(transport=httpx.MockTransport(handler), base_url=RazorpayGateway._BASE_URL)
 
 
 def signed_headers(raw_body: bytes, *, event_id: str, secret: str = TEST_WEBHOOK_SECRET) -> dict[str, str]:

@@ -1,6 +1,6 @@
 /.agents
 /.claude
-
+/test-scripts
 /skills-lock.json
 
 .env

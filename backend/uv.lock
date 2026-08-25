@@ -57,6 +57,7 @@ source = { virtual = "." }
 dependencies = [
     { name = "anthropic" },
     { name = "fastapi" },
+    { name = "httpx" },
     { name = "pydantic-settings" },
     { name = "sqlmodel" },
     { name = "uvicorn", extra = ["standard"] },
@@ -72,6 +73,7 @@ dev = [
 requires-dist = [
     { name = "anthropic", specifier = ">=1.0.0" },
     { name = "fastapi", specifier = ">=0.141.1" },
+    { name = "httpx", specifier = ">=0.28.1" },
     { name = "pydantic-settings", specifier = ">=2.15.0" },
     { name = "sqlmodel", specifier = ">=0.0.39" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.52.4" },

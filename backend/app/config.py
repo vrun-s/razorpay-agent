@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -20,6 +21,11 @@ class Settings(BaseSettings):
     razorpay_key_secret: str | None = None
     razorpay_webhook_secret: str | None = None
     razorpay_webhook_url: str | None = None
+
+    # ticket 13: which Gateway implementation get_gateway() hands out. "fake"
+    # (default) keeps every existing ticket's behavior unchanged; "razorpay"
+    # makes real calls against Razorpay test mode using the credentials above.
+    gateway_backend: Literal["fake", "razorpay"] = "fake"
 
     anthropic_api_key: str | None = None
 

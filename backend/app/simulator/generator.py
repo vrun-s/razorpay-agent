@@ -6,7 +6,9 @@ simulator-only ground truth -- documented here never to be exposed to the
 Decision Engine, per CONTEXT.md's Customer Segment vs Customer Segment Proxy
 distinction.
 
-Not wired into the Gateway seam or any live endpoint yet -- that's ticket 14.
+Wired into the Gateway seam by `app/simulator_gateway.py` and driven at
+volume by `app/simulator_driver.py` (ticket 14) -- both live outside this
+package, which stays independent of Decision Engine/Policy Engine code.
 """
 
 from __future__ import annotations

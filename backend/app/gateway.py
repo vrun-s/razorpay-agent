@@ -44,11 +44,12 @@ class GatewayError(Exception):
     """A real Gateway call reached Razorpay but got back a non-2xx response."""
 
 
-def _parse_webhook_payload(raw_body: bytes) -> ParsedWebhookEvent:
-    """Shared by every Gateway implementation: signature verification already
-    happened at the ingestion boundary (`app/webhook_security.py`) before
-    `parse_webhook` runs, so this is pure JSON shape extraction, identical
-    whether the body came from the simulator or real Razorpay."""
+def parse_webhook_payload(raw_body: bytes) -> ParsedWebhookEvent:
+    """Shared by every Gateway implementation (including ticket 14's
+    `SimulatorGateway`, app/simulator_gateway.py): signature verification
+    already happened at the ingestion boundary (`app/webhook_security.py`)
+    before `parse_webhook` runs, so this is pure JSON shape extraction,
+    identical whether the body came from the simulator or real Razorpay."""
     payload = json.loads(raw_body)
     return ParsedWebhookEvent(event=payload.get("event", ""), payload=payload)
 
@@ -94,7 +95,7 @@ class FakeGateway:
         return ResumeChargeResult(subscription_id=subscription_id, status="charge_pending")
 
     def parse_webhook(self, *, headers: dict[str, str], raw_body: bytes) -> ParsedWebhookEvent:
-        return _parse_webhook_payload(raw_body)
+        return parse_webhook_payload(raw_body)
 
 
 class RazorpayGateway:
@@ -151,7 +152,7 @@ class RazorpayGateway:
         return ResumeChargeResult(subscription_id=data.get("id", subscription_id), status=data["status"])
 
     def parse_webhook(self, *, headers: dict[str, str], raw_body: bytes) -> ParsedWebhookEvent:
-        return _parse_webhook_payload(raw_body)
+        return parse_webhook_payload(raw_body)
 
 
 _default_gateway = FakeGateway()

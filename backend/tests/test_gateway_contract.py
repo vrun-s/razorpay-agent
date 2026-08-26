@@ -13,11 +13,14 @@ assert it does so consistently across both Gateway methods -- the one part of
 """
 
 import json
+import random
 
 import httpx
 import pytest
 
 from app.gateway import FakeGateway, Gateway, GatewayError, PaymentLinkResult, RazorpayGateway, ResumeChargeResult
+from app.simulator.generator import generate_population
+from app.simulator_gateway import SimulatorGateway
 from tests.conftest import mock_razorpay_client
 
 
@@ -36,11 +39,15 @@ def _razorpay_gateway_backed_by(*, payment_link_status: str, resume_status: str)
     params=[
         "fake",
         "razorpay",
+        "simulator",
     ]
 )
 def gateway(request) -> Gateway:
     if request.param == "fake":
         return FakeGateway()
+    if request.param == "simulator":
+        [simulated_case] = generate_population(seed=1, size=1)
+        return SimulatorGateway(simulated_case.hidden, rng=random.Random(1))
     return _razorpay_gateway_backed_by(payment_link_status="created", resume_status="active")
 
 

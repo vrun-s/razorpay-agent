@@ -34,17 +34,37 @@ class SimulatedCase:
     hidden: HiddenGroundTruth
 
 
-def generate_population(seed: int, size: int) -> list[SimulatedCase]:
-    """Generate `size` cases deterministically: same (seed, size) -> identical output."""
+def generate_population(
+    seed: int,
+    size: int,
+    *,
+    persona_mix: dict[Persona, float] | None = None,
+    response_curves: dict[Persona, dict[Intervention, float]] | None = None,
+) -> list[SimulatedCase]:
+    """Generate `size` cases deterministically: same (seed, size) -> identical output.
+
+    `persona_mix`/`response_curves` override the frozen `PERSONA_MIX`/
+    `BASE_RESPONSE_CURVES` for this call only, defaulting to them otherwise
+    -- used by the ticket-16 misspecification stress test
+    (app/stress_test.py) to generate a deliberately perturbed population
+    without touching either frozen constant.
+    """
+    curves = response_curves if response_curves is not None else BASE_RESPONSE_CURVES
     rng = random.Random(seed)
-    return [_generate_one_case(rng, case_index=i) for i in range(size)]
+    return [_generate_one_case(rng, case_index=i, persona_mix=persona_mix, response_curves=curves) for i in range(size)]
 
 
-def _generate_one_case(rng: random.Random, *, case_index: int) -> SimulatedCase:
-    persona = sample_persona(rng)
+def _generate_one_case(
+    rng: random.Random,
+    *,
+    case_index: int,
+    persona_mix: dict[Persona, float] | None,
+    response_curves: dict[Persona, dict[Intervention, float]],
+) -> SimulatedCase:
+    persona = sample_persona(rng, persona_mix=persona_mix)
     return SimulatedCase(
         case_index=case_index,
-        hidden=HiddenGroundTruth(customer_segment=persona, outcome_odds=dict(BASE_RESPONSE_CURVES[persona])),
+        hidden=HiddenGroundTruth(customer_segment=persona, outcome_odds=dict(response_curves[persona])),
     )
 
 

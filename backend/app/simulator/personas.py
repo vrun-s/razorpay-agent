@@ -31,5 +31,11 @@ _PERSONAS_IN_ORDER = list(PERSONA_MIX.keys())
 _WEIGHTS_IN_ORDER = [PERSONA_MIX[persona] for persona in _PERSONAS_IN_ORDER]
 
 
-def sample_persona(rng: random.Random) -> Persona:
-    return rng.choices(_PERSONAS_IN_ORDER, weights=_WEIGHTS_IN_ORDER, k=1)[0]
+def sample_persona(rng: random.Random, *, persona_mix: dict[Persona, float] | None = None) -> Persona:
+    """`persona_mix` overrides the frozen `PERSONA_MIX` for this call only --
+    used by the ticket-16 misspecification stress test (app/stress_test.py)
+    to sample from a deliberately perturbed mix without touching the frozen
+    constant itself. Weights need not sum to 1.0 (`random.choices` treats
+    them as relative)."""
+    mix = persona_mix if persona_mix is not None else PERSONA_MIX
+    return rng.choices(list(mix.keys()), weights=list(mix.values()), k=1)[0]

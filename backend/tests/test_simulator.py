@@ -113,3 +113,37 @@ def test_decision_and_policy_engines_do_not_import_the_simulator():
     for path in (DECISION_ENGINE_FILE, POLICY_ENGINE_FILE):
         for name in _imported_module_names(path):
             assert not name.startswith("app.simulator"), f"{path.name} imports the simulator: {name}"
+
+
+# -- ticket 16: optional persona_mix/response_curves overrides --------------
+
+
+def test_generate_population_with_no_override_matches_default_behavior():
+    default = generate_population(seed=1, size=10)
+    overridden = generate_population(seed=1, size=10, persona_mix=None, response_curves=None)
+
+    assert default == overridden
+
+
+def test_generate_population_respects_an_overridden_persona_mix():
+    skewed_mix = {Persona.LOYAL: 0.0, Persona.BARGAIN_HUNTER: 0.0, Persona.NEW: 0.0, Persona.UNRELIABLE_PAYER: 1.0}
+
+    population = generate_population(seed=1, size=50, persona_mix=skewed_mix)
+
+    assert all(case.hidden.customer_segment == Persona.UNRELIABLE_PAYER for case in population)
+
+
+def test_generate_population_respects_overridden_response_curves():
+    flat_curves = {persona: {intervention: 0.9 for intervention in Intervention} for persona in Persona}
+
+    population = generate_population(seed=1, size=20, response_curves=flat_curves)
+
+    assert all(
+        probability == 0.9 for case in population for probability in case.hidden.outcome_odds.values()
+    )
+
+
+def test_overriding_response_curves_leaves_the_frozen_constant_untouched():
+    generate_population(seed=1, size=5, response_curves={p: {i: 0.5 for i in Intervention} for p in Persona})
+
+    assert BASE_RESPONSE_CURVES[Persona.LOYAL][Intervention.PAYMENT_RETRY] == 0.55

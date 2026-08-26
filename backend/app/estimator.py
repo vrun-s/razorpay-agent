@@ -127,3 +127,20 @@ _default_estimator = Estimator()
 
 def get_estimator() -> Estimator:
     return _default_estimator
+
+
+def reset_estimator() -> Estimator:
+    """Replaces the process-wide singleton with a fresh, cold-start instance.
+
+    Used by the evaluation harness (ticket 15, app/evaluation.py) at the
+    start of every run: the AI arm's online learning must start cold for a
+    run to be reproducible from its seed alone, otherwise a rerun (or the
+    dev/validation/held-out sequence within one run) would start warmer than
+    the last one left off. Destructive to any concurrent live traffic's
+    posterior state -- acceptable because the evaluation harness is a batch
+    script, not something that runs alongside live webhook traffic in this
+    single-process demo (ADR-0008).
+    """
+    global _default_estimator
+    _default_estimator = Estimator()
+    return _default_estimator

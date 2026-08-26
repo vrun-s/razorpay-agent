@@ -125,7 +125,8 @@ def test_a_sequence_bound_rejected_no_action_is_never_resolved_as_an_outcome(ses
     [simulated] = generate_population(seed=6, size=1)
     gateway = SimulatorGateway(simulated.hidden, rng=random.Random(6))
 
-    assert _resolve_cycle_outcome(gateway, case, new_entries) is None
+    outcome = _resolve_cycle_outcome(gateway, case, new_entries)
+    assert outcome.resolved is False
 
 
 # -- Population-level statistical sanity check (ticket 14 acceptance criterion) --

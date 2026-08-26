@@ -16,7 +16,7 @@ ticket 07's estimator exclusion rule).
 from __future__ import annotations
 
 import random
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from sqlmodel import Session
 
@@ -32,17 +32,37 @@ from app.simulator_gateway import SimulatorGateway
 # ever reaches a terminal state -- this is what does.
 _MAX_REASSESSMENT_CYCLES = 10
 
+# The synthetic payment amount every simulated failed-payment case carries
+# (paise). The frozen generator (ticket 02) has no case-value dimension --
+# only persona/response-curve ground truth -- so every case shares one fixed
+# face value; ticket 15's evaluation harness reuses this same constant so a
+# case's gross_recovered is consistent across every arm that scores it.
+DEFAULT_CASE_AMOUNT = 50_000
+
+
+@dataclass(frozen=True)
+class ResolvedDecision:
+    """One reassessment cycle whose outcome was actually observed this cycle
+    (an executed intervention, or a resolved NO_ACTION) -- paired
+    (predicted, actual) data point for the estimator's calibration curve
+    (ticket 15, app/evaluation.py). A cycle nothing happened in (declined by
+    Policy Engine/Streaming Allocator) contributes no data point here."""
+
+    point_estimate: float
+    recovered: bool
+
 
 @dataclass(frozen=True)
 class SimulationOutcome:
     case: RecoveryCase
     recovered: bool
+    resolved_decisions: list[ResolvedDecision] = field(default_factory=list)
 
 
 def _failed_payment_payload(simulated: SimulatedCase) -> dict:
     return {
         "id": f"pay_sim_{simulated.case_index}",
-        "amount": 50_000,
+        "amount": DEFAULT_CASE_AMOUNT,
         "currency": "INR",
         "order_id": f"order_sim_{simulated.case_index}",
         "email": "customer@example.com",
@@ -56,11 +76,18 @@ def _halted_subscription_payload(simulated: SimulatedCase) -> dict:
     return {"id": f"sub_sim_{simulated.case_index}", "plan_id": "plan_sim_default"}
 
 
-def _resolve_cycle_outcome(gateway: SimulatorGateway, case: RecoveryCase, new_entries: list[CaseHistoryEntry]) -> bool | None:
+@dataclass(frozen=True)
+class _CycleOutcome:
+    resolved: bool  # whether this cycle actually produced an observation
+    recovered: bool  # meaningless when resolved is False
+    point_estimate: float | None  # this cycle's DECISION entry's point_estimate, if any
+
+
+def _resolve_cycle_outcome(gateway: SimulatorGateway, case: RecoveryCase, new_entries: list[CaseHistoryEntry]) -> _CycleOutcome:
     """What this reassessment cycle's outcome is, if resolvable yet.
 
-    `None` means nothing executed this cycle (the Policy Engine or Streaming
-    Allocator declined the proposal) -- the same "wait for the next
+    `resolved=False` means nothing executed this cycle (the Policy Engine or
+    Streaming Allocator declined the proposal) -- the same "wait for the next
     reassessment" state a real case sits in when nothing has happened yet.
 
     A NO_ACTION decision only gets resolved if the case is still OPEN after
@@ -71,18 +98,22 @@ def _resolve_cycle_outcome(gateway: SimulatorGateway, case: RecoveryCase, new_en
     a decision that never actually took effect would risk flipping an
     already-STOPPED case back to RECOVERED.
     """
+    decision = next((entry for entry in new_entries if entry.entry_type == CaseHistoryEntryType.DECISION), None)
+    point_estimate = decision.data.get("point_estimate") if decision is not None else None
+
     executed = any(entry.entry_type == CaseHistoryEntryType.EXECUTION for entry in new_entries)
     if executed:
-        return gateway.last_outcome
+        return _CycleOutcome(resolved=True, recovered=gateway.last_outcome, point_estimate=point_estimate)
 
     if case.status != CaseStatus.OPEN:
-        return None
+        return _CycleOutcome(resolved=False, recovered=False, point_estimate=point_estimate)
 
-    decision = next((entry for entry in new_entries if entry.entry_type == CaseHistoryEntryType.DECISION), None)
     if decision is not None and decision.data["intervention"] == Intervention.NO_ACTION.value:
-        return gateway.resolve(Intervention.NO_ACTION)
+        return _CycleOutcome(
+            resolved=True, recovered=gateway.resolve(Intervention.NO_ACTION), point_estimate=point_estimate
+        )
 
-    return None
+    return _CycleOutcome(resolved=False, recovered=False, point_estimate=point_estimate)
 
 
 def run_simulated_case(
@@ -103,12 +134,16 @@ def run_simulated_case(
 
     seen = 0
     cycle = 0
+    resolved_decisions: list[ResolvedDecision] = []
     while True:
         new_entries = case.history[seen:]
         seen = len(case.history)
 
-        recovered = _resolve_cycle_outcome(gateway, case, new_entries)
-        if recovered:
+        outcome = _resolve_cycle_outcome(gateway, case, new_entries)
+        if outcome.resolved and outcome.point_estimate is not None:
+            resolved_decisions.append(ResolvedDecision(point_estimate=outcome.point_estimate, recovered=outcome.recovered))
+
+        if outcome.resolved and outcome.recovered:
             case = mark_recovered(
                 session,
                 case,
@@ -123,7 +158,9 @@ def run_simulated_case(
         cycle += 1
         case = run_decision_cycle(session, gateway, case)
 
-    return SimulationOutcome(case=case, recovered=case.status == CaseStatus.RECOVERED)
+    return SimulationOutcome(
+        case=case, recovered=case.status == CaseStatus.RECOVERED, resolved_decisions=resolved_decisions
+    )
 
 
 def run_simulated_population(

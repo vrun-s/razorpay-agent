@@ -164,4 +164,6 @@ async def payment_captured(
         await run_in_threadpool(record_processed_event, session, event_id, case)
         return case  # already resolved -- a later/duplicate capture event is a no-op.
 
-    return await run_in_threadpool(mark_recovered, session, case, event_id, reason=f"payment {payment['id']} captured")
+    return await run_in_threadpool(
+        mark_recovered, session, case, event_id, reason=f"payment {payment['id']} captured", trigger="payment.captured"
+    )

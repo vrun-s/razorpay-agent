@@ -368,7 +368,9 @@ def record_processed_event(session: Session, event_id: str, case: RecoveryCase) 
     session.commit()
 
 
-def mark_recovered(session: Session, case: RecoveryCase, event_id: str, *, reason: str) -> RecoveryCase:
+def mark_recovered(
+    session: Session, case: RecoveryCase, event_id: str, *, reason: str, trigger: str | None = None
+) -> RecoveryCase:
     """Closes a case as recovered -- a real outcome arrived, so no further Reassessment is needed.
 
     Feeds the outcome back into the estimator's cell for whatever intervention
@@ -378,7 +380,21 @@ def mark_recovered(session: Session, case: RecoveryCase, event_id: str, *, reaso
     Records the triggering webhook's dedup entry in the same commit as the
     state transition, exactly like intake.py's case creation -- one atomic
     write, not two.
+
+    `trigger` (e.g. `"payment.captured"`) names the outcome webhook that drove
+    this, when there is one: ADR-0005 counts a real outcome webhook as a
+    Reassessment trigger in its own right, so it's logged as a
+    REASSESSMENT_TRIGGERED entry the same way run_sweep logs the scheduled
+    one. Left None by the simulator driver, whose outcomes have no webhook.
     """
+    if trigger is not None:
+        log_entry(
+            session,
+            case,
+            CaseHistoryEntryType.REASSESSMENT_TRIGGERED,
+            f"Outcome webhook received: {trigger}",
+            {"trigger": "webhook", "event": trigger},
+        )
     session.add(ProcessedWebhookEvent(event_id=event_id, case_id=case.id))
     case.status = CaseStatus.RECOVERED
     case.response_window_expires_at = None

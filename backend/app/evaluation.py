@@ -44,8 +44,12 @@ criterion, since a warm-started rerun would not reproduce the same numbers.
 
 from __future__ import annotations
 
+import argparse
+import json
 import random
 from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
 
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
@@ -588,3 +592,105 @@ def run_evaluation(
         bootstrap_results=bootstrap_results,
         calibration=calibration_curve(ai_treatment.resolved_decisions),
     )
+
+
+# -- JSON artifact for the dashboard (ticket 18) ---------------------------
+
+# The evaluation harness is expensive (four arms over 650 cases + 10k
+# bootstrap resamples) and deterministic, so ticket 18's dashboard reads a
+# cached artifact written by `python -m app.evaluation` rather than
+# recomputing it in an HTTP handler. Anchored to the backend dir the same
+# way app/config.py anchors the .env path.
+DEFAULT_REPORT_PATH = Path(__file__).resolve().parent.parent / "evaluation_report.json"
+
+
+def report_to_dict(report: EvaluationReport) -> dict[str, Any]:
+    """A JSON-serializable projection of an `EvaluationReport` -- exactly the
+    numbers test2108.md §13 items 5-6 want on screen (NRR vs. both baselines
+    with an interval and % of offline-optimal, plus the calibration curve)."""
+    return {
+        "run_seed": report.run_seed,
+        "workflow_type": report.workflow_type.value,
+        "arms": {
+            name: {
+                "total_nrr": arm.total_nrr,
+                "case_count": len(arm.case_results),
+                "recovered_count": sum(1 for r in arm.case_results if r.recovered),
+            }
+            for name, arm in report.arms.items()
+        },
+        "baselines": [
+            {
+                "baseline_name": b.baseline_name,
+                "incremental_nrr": b.point_estimate,
+                "ci_lower": b.ci_lower,
+                "ci_upper": b.ci_upper,
+            }
+            for b in report.bootstrap_results
+        ],
+        "pct_of_offline_optimal": report.pct_of_offline_optimal_captured(),
+        "calibration": [
+            {
+                "bucket_low": c.bucket_low,
+                "bucket_high": c.bucket_high,
+                "mean_predicted": c.mean_predicted,
+                "observed_rate": c.observed_rate,
+                "count": c.count,
+            }
+            for c in report.calibration
+        ],
+    }
+
+
+def _split_cases(split: str, seed: int) -> list[SimulatedCase]:
+    splits = generate_dataset_splits(seed)
+    return {"dev": splits.dev, "validation": splits.validation, "held_out": splits.held_out}[split]
+
+
+# Default to `dev` for the dashboard artifact: it is a demo/inspection view
+# refreshed freely, and ADR-0013 reserves `held_out` for the single final
+# headline run. Pass `--split held_out` explicitly for that one.
+DASHBOARD_SPLIT = "dev"
+
+
+def write_report(
+    *,
+    split: str = DASHBOARD_SPLIT,
+    dataset_seed: int = DEFAULT_DATASET_SEED,
+    run_seed: int = DEFAULT_DATASET_SEED,
+    out_path: Path = DEFAULT_REPORT_PATH,
+    n_bootstrap_resamples: int = 10_000,
+) -> Path:
+    """Runs the harness once on `split` and writes the JSON artifact the
+    dashboard serves. Returns the path written."""
+    report = run_evaluation(
+        _split_cases(split, dataset_seed),
+        run_seed=run_seed,
+        n_bootstrap_resamples=n_bootstrap_resamples,
+    )
+    payload = report_to_dict(report) | {"split": split}
+    out_path.write_text(json.dumps(payload, indent=2))
+    return out_path
+
+
+def _main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(description="Run the evaluation harness and write its JSON report (ticket 18).")
+    parser.add_argument("--split", choices=("dev", "validation", "held_out"), default=DASHBOARD_SPLIT)
+    parser.add_argument("--dataset-seed", type=int, default=DEFAULT_DATASET_SEED)
+    parser.add_argument("--run-seed", type=int, default=DEFAULT_DATASET_SEED)
+    parser.add_argument("--out", type=Path, default=DEFAULT_REPORT_PATH)
+    parser.add_argument("--bootstrap-resamples", type=int, default=10_000)
+    args = parser.parse_args(argv)
+
+    path = write_report(
+        split=args.split,
+        dataset_seed=args.dataset_seed,
+        run_seed=args.run_seed,
+        out_path=args.out,
+        n_bootstrap_resamples=args.bootstrap_resamples,
+    )
+    print(f"wrote {path}")
+
+
+if __name__ == "__main__":
+    _main()

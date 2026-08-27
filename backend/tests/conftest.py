@@ -35,6 +35,19 @@ def client(session):
     app.dependency_overrides.clear()
 
 
+@pytest.fixture()
+def isolated_estimator(monkeypatch):
+    """Swaps the process-wide `Estimator` singleton for a fresh one for the
+    duration of a test, so one test's forced posterior can't decide another
+    test's cases. Not autouse -- opt in per module with
+    `pytestmark = pytest.mark.usefixtures("isolated_estimator")`. Same
+    mechanism tests/test_evaluation.py's own fixture uses inline.
+    """
+    import app.estimator as estimator_module
+
+    monkeypatch.setattr(estimator_module, "_default_estimator", estimator_module.Estimator())
+
+
 @pytest.fixture(autouse=True)
 def webhook_secret(monkeypatch):
     """Fixes the webhook secret for tests, independent of whatever is in .env."""

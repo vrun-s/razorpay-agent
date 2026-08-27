@@ -86,7 +86,10 @@ class RecoveryCase(SQLModel, table=True):
 
     history: list[CaseHistoryEntry] = Relationship(
         back_populates="case",
-        sa_relationship_kwargs={"order_by": "CaseHistoryEntry.created_at", "cascade": "all, delete-orphan"},
+        # `id` breaks ties: several entries share one transaction's timestamp
+        # to the microsecond, and the timeline view's ordering (ticket 18)
+        # depends on insertion order within a cycle being stable.
+        sa_relationship_kwargs={"order_by": "CaseHistoryEntry.created_at, CaseHistoryEntry.id", "cascade": "all, delete-orphan"},
     )
 
 

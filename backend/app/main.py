@@ -12,7 +12,7 @@ from app.config import settings
 from app.db import create_db_and_tables, engine
 from app.gateway import get_gateway
 from app.lifecycle import run_sweep
-from app.routers import cases, webhooks
+from app.routers import cases, observability, webhooks
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +52,7 @@ app.add_middleware(
 
 app.include_router(webhooks.router)
 app.include_router(cases.router)
+app.include_router(observability.router)
 
 
 @app.get("/health")

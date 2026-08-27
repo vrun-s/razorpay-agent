@@ -1,71 +1,87 @@
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { fetchCases, type CaseHistoryEntry, type RecoveryCase } from './api'
+import { fetchCases } from './api'
 import { EscalationQueue } from './EscalationQueue'
+import { CaseTimelineView } from './CaseTimeline'
+import { BudgetTimelineView } from './BudgetTimeline'
+import { EvaluationView } from './Evaluation'
 
-const STATUS_STYLES: Record<RecoveryCase['status'], string> = {
-  open: 'bg-blue-100 text-blue-800',
-  recovered: 'bg-green-100 text-green-800',
-  stopped: 'bg-gray-100 text-gray-700',
-  escalated: 'bg-amber-100 text-amber-800',
+const TABS = [
+  { id: 'timeline', label: 'Case Timeline' },
+  { id: 'budget', label: 'Reserved Budget' },
+  { id: 'evaluation', label: 'Evaluation' },
+  { id: 'escalations', label: 'Escalations' },
+] as const
+
+type TabId = (typeof TABS)[number]['id']
+
+const STORAGE_KEY = 'recovery-dashboard-tab'
+
+function loadTab(): TabId {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY)
+    if (saved && TABS.some((t) => t.id === saved)) return saved as TabId
+  } catch {
+    // localStorage unavailable (private window, blocked) — fall through.
+  }
+  return 'timeline'
 }
 
-function HistoryEntryRow({ entry }: { entry: CaseHistoryEntry }) {
-  return (
-    <li className="flex items-start gap-3 py-1.5 text-sm">
-      <span className="mt-0.5 shrink-0 rounded bg-gray-100 px-1.5 py-0.5 font-mono text-xs text-gray-500">
-        {entry.entry_type}
-      </span>
-      <span className="text-gray-700">{entry.summary}</span>
-    </li>
-  )
-}
-
-function CaseCard({ recoveryCase }: { recoveryCase: RecoveryCase }) {
-  return (
-    <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <p className="font-mono text-xs text-gray-400">{recoveryCase.id}</p>
-          <p className="text-sm text-gray-600">{recoveryCase.workflow_type}</p>
-        </div>
-        <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${STATUS_STYLES[recoveryCase.status]}`}>
-          {recoveryCase.status}
-        </span>
-      </div>
-      <ul className="mt-3 divide-y divide-gray-100 border-t border-gray-100 pt-2">
-        {recoveryCase.history.map((entry) => (
-          <HistoryEntryRow key={entry.id} entry={entry} />
-        ))}
-      </ul>
-    </div>
-  )
-}
-
-function App() {
+function EscalationsTab() {
   const { data: cases, isLoading, isError, error } = useQuery({
     queryKey: ['cases'],
     queryFn: fetchCases,
     refetchInterval: 3000,
   })
 
+  if (isLoading) return <p className="text-gray-500">Loading cases…</p>
+  if (isError) return <p className="text-red-600">Failed to load cases: {String(error)}</p>
+  return <EscalationQueue cases={cases ?? []} />
+}
+
+function App() {
+  const [tab, setTab] = useState<TabId>(loadTab)
+
+  const selectTab = (id: TabId) => {
+    setTab(id)
+    try {
+      localStorage.setItem(STORAGE_KEY, id)
+    } catch {
+      // ignore
+    }
+  }
+
   return (
-    <div className="mx-auto min-h-svh max-w-3xl px-6 py-10">
-      <h1 className="text-2xl font-semibold text-gray-900">Recovery Cases</h1>
-      <p className="mt-1 text-sm text-gray-500">Polling every 3s.</p>
+    <div className="mx-auto min-h-svh max-w-5xl px-6 py-10">
+      <header>
+        <h1 className="text-2xl font-semibold text-gray-900">Revenue Recovery — Observability</h1>
+        <p className="mt-1 text-sm text-gray-500">
+          The agent's decisions, the reserve it holds back, and how it scores against the baselines.
+        </p>
+      </header>
 
-      {isLoading && <p className="mt-8 text-gray-500">Loading cases…</p>}
-      {isError && <p className="mt-8 text-red-600">Failed to load cases: {String(error)}</p>}
-      {cases && cases.length === 0 && (
-        <p className="mt-8 text-gray-500">No Recovery Cases yet. POST a synthetic payment.failed payload to create one.</p>
-      )}
-
-      {cases && <EscalationQueue cases={cases} />}
-
-      <div className="mt-6 space-y-4">
-        {cases?.map((recoveryCase) => (
-          <CaseCard key={recoveryCase.id} recoveryCase={recoveryCase} />
+      <nav className="mt-6 flex gap-1 border-b border-gray-200">
+        {TABS.map((t) => (
+          <button
+            key={t.id}
+            onClick={() => selectTab(t.id)}
+            className={`-mb-px border-b-2 px-3 py-2 text-sm font-medium transition ${
+              tab === t.id
+                ? 'border-blue-600 text-blue-700'
+                : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'
+            }`}
+          >
+            {t.label}
+          </button>
         ))}
-      </div>
+      </nav>
+
+      <main className="mt-6">
+        {tab === 'timeline' && <CaseTimelineView />}
+        {tab === 'budget' && <BudgetTimelineView />}
+        {tab === 'evaluation' && <EvaluationView />}
+        {tab === 'escalations' && <EscalationsTab />}
+      </main>
     </div>
   )
 }

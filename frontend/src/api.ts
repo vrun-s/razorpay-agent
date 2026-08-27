@@ -40,6 +40,113 @@ export async function fetchCases(): Promise<RecoveryCase[]> {
   return response.json()
 }
 
+// -- Ticket 18: dashboard observability views --------------------------------
+
+export interface BudgetSnapshot {
+  timestamp: string
+  case_id: string
+  funded: boolean
+  reason: string
+  spent: number
+  available: number
+  reserved: number
+}
+
+export interface CaseFlags {
+  no_action_recovered: boolean
+  policy_rejected: boolean
+  human_overridden: boolean
+  escalated: boolean
+}
+
+export interface CaseSummary {
+  id: string
+  workflow_type: WorkflowType
+  status: CaseStatus
+  source: EventSource
+  created_at: string
+  flags: CaseFlags
+}
+
+export type TimelineStageName =
+  | 'detected'
+  | 'decision'
+  | 'policy_check'
+  | 'allocation'
+  | 'execution'
+  | 'reassessment'
+  | 'outcome'
+
+export interface TimelineStage {
+  stage: TimelineStageName | string
+  label: string
+  timestamp: string
+  entry_type: string
+  detail: Record<string, unknown>
+}
+
+export interface CaseTimeline {
+  case: CaseSummary
+  stages: TimelineStage[]
+}
+
+export interface EvaluationArm {
+  total_nrr: number
+  case_count: number
+  recovered_count: number
+}
+
+export interface EvaluationBaseline {
+  baseline_name: string
+  incremental_nrr: number
+  ci_lower: number
+  ci_upper: number
+}
+
+export interface CalibrationBucket {
+  bucket_low: number
+  bucket_high: number
+  mean_predicted: number
+  observed_rate: number
+  count: number
+}
+
+export interface EvaluationReport {
+  run_seed: number
+  workflow_type: string
+  split?: string
+  arms: Record<string, EvaluationArm>
+  baselines: EvaluationBaseline[]
+  pct_of_offline_optimal: number
+  calibration: CalibrationBucket[]
+}
+
+export async function fetchBudgetTimeline(): Promise<BudgetSnapshot[]> {
+  const response = await fetch(`${API_BASE_URL}/budget/timeline`)
+  if (!response.ok) throw new Error(`Failed to fetch budget timeline: ${response.status}`)
+  return response.json()
+}
+
+export async function fetchCaseSummaries(): Promise<CaseSummary[]> {
+  const response = await fetch(`${API_BASE_URL}/observability/cases`)
+  if (!response.ok) throw new Error(`Failed to fetch case summaries: ${response.status}`)
+  return response.json()
+}
+
+export async function fetchCaseTimeline(caseId: string): Promise<CaseTimeline> {
+  const response = await fetch(`${API_BASE_URL}/observability/cases/${caseId}/timeline`)
+  if (!response.ok) throw new Error(`Failed to fetch case timeline: ${response.status}`)
+  return response.json()
+}
+
+/** Resolves to null when the artifact has not been generated yet (HTTP 404). */
+export async function fetchEvaluationReport(): Promise<EvaluationReport | null> {
+  const response = await fetch(`${API_BASE_URL}/evaluation/report`)
+  if (response.status === 404) return null
+  if (!response.ok) throw new Error(`Failed to fetch evaluation report: ${response.status}`)
+  return response.json()
+}
+
 export async function overrideCase(caseId: string, intervention: Intervention): Promise<RecoveryCase> {
   const response = await fetch(`${API_BASE_URL}/cases/${caseId}/override`, {
     method: 'POST',

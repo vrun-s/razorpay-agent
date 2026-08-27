@@ -1,1 +1,178 @@
-@import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=Mulish:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400&family=IBM+Plex+Mono:wght@400;500&family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&display=swap');
+@import 'tailwindcss';
+
+/* Tokens are plain custom properties (swapped per theme below); @theme inline
+   aliases them to Tailwind colour/font utilities so `bg-surface`, `text-ink`,
+   `stroke-brand` etc. resolve at runtime and follow the active theme. */
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-border: var(--border);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+  --color-brand: var(--brand);
+  --color-brand-strong: var(--brand-strong);
+  --color-brand-wash: var(--brand-wash);
+  --color-kicker: var(--kicker);
+  --color-ok: var(--ok);
+  --color-ok-wash: var(--ok-wash);
+  --color-warn: var(--warn);
+  --color-warn-wash: var(--warn-wash);
+  --color-bad: var(--bad);
+  --color-bad-wash: var(--bad-wash);
+  --color-violet: var(--violet);
+  --color-violet-wash: var(--violet-wash);
+  --color-topbar: var(--topbar);
+  --color-topbar-ink: var(--topbar-ink);
+
+  --font-sans: 'Mulish', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-serif: 'Newsreader', ui-serif, Georgia, 'Times New Roman', serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* --- Light (the Razorpay dashboard: near-black indigo chrome, blue actions) --- */
+:root {
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --surface-2: #eef1f6;
+  --border: #e4e7ee;
+  --ink: #0d0d26;
+  --muted: #5a5f73;
+  --faint: #8a8fa3;
+  --brand: #2b7fff;
+  --brand-strong: #1257d6;
+  --brand-wash: #eaf1ff;
+  --kicker: #8a6524;
+  --ok: #1b9e6b;
+  --ok-wash: #e4f5ee;
+  --warn: #b27a16;
+  --warn-wash: #fbf3e0;
+  --bad: #d33b3b;
+  --bad-wash: #fcebeb;
+  --violet: #6b4edb;
+  --violet-wash: #eeeafb;
+  --topbar: #0d0d26;
+  --topbar-ink: #edeef5;
+  --shadow: 0 1px 2px rgba(13, 13, 38, 0.06), 0 1px 3px rgba(13, 13, 38, 0.1);
+  color-scheme: light;
+}
+
+/* --- Dark (the /buildathon microsite: warm near-black, gold kickers) --- */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --bg: #0b0906;
+    --surface: #17120e;
+    --surface-2: #201a14;
+    --border: #2c241c;
+    --ink: #f4eee2;
+    --muted: #b3a794;
+    --faint: #857a6a;
+    --brand: #5b9bff;
+    --brand-strong: #7db0ff;
+    --brand-wash: #16223b;
+    --kicker: #cf9f5f;
+    --ok: #4fb98a;
+    --ok-wash: #10241c;
+    --warn: #d6a65c;
+    --warn-wash: #2a2113;
+    --bad: #e06b6b;
+    --bad-wash: #2c1717;
+    --violet: #a98cf0;
+    --violet-wash: #1e1830;
+    --topbar: #050403;
+    --topbar-ink: #f4eee2;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme='dark'] {
+  --bg: #0b0906;
+  --surface: #17120e;
+  --surface-2: #201a14;
+  --border: #2c241c;
+  --ink: #f4eee2;
+  --muted: #b3a794;
+  --faint: #857a6a;
+  --brand: #5b9bff;
+  --brand-strong: #7db0ff;
+  --brand-wash: #16223b;
+  --kicker: #cf9f5f;
+  --ok: #4fb98a;
+  --ok-wash: #10241c;
+  --warn: #d6a65c;
+  --warn-wash: #2a2113;
+  --bad: #e06b6b;
+  --bad-wash: #2c1717;
+  --violet: #a98cf0;
+  --violet-wash: #1e1830;
+  --topbar: #050403;
+  --topbar-ink: #f4eee2;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+  color-scheme: dark;
+}
+
+html {
+  background: var(--bg);
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+*:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+/* --- Small reusable pieces --------------------------------------------------- */
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+}
+
+/* The small-caps ochre/gold eyebrow lifted from the microsite's WHY NOW /
+   EXAMPLE DIRECTIONS labels — carried into both themes as the one editorial
+   through-line between the marketing page and the product. */
+.kicker {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--kicker);
+}
+
+.codechip {
+  background: var(--surface-2);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  color: var(--ink);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .tab-fade {
+    animation: tab-fade 0.18s ease-out both;
+  }
+  @keyframes tab-fade {
+    from {
+      opacity: 0;
+      transform: translateY(4px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+}

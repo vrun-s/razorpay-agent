@@ -16,10 +16,10 @@ export function pct(fraction: number): string {
   return `${(fraction * 100).toFixed(1)}%`
 }
 
-/** Tailwind badge classes per Recovery Case status — shared by every view that renders one. */
+/** Badge classes per Recovery Case status — shared by every view that renders one. */
 export const STATUS_BADGE: Record<'open' | 'recovered' | 'stopped' | 'escalated', string> = {
-  open: 'bg-blue-100 text-blue-800',
-  recovered: 'bg-green-100 text-green-800',
-  stopped: 'bg-gray-100 text-gray-700',
-  escalated: 'bg-amber-100 text-amber-800',
+  open: 'bg-brand-wash text-brand',
+  recovered: 'bg-ok-wash text-ok',
+  stopped: 'bg-surface-2 text-muted',
+  escalated: 'bg-warn-wash text-warn',
 }

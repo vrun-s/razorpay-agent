@@ -26,51 +26,54 @@ function linePath(values: number[], yMax: number): string {
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-lg border border-gray-200 bg-white px-3 py-2">
-      <p className="text-[11px] uppercase tracking-wide text-gray-400">{label}</p>
-      <p className="mt-0.5 font-mono text-sm text-gray-800">{value}</p>
+    <div className="card px-3 py-2">
+      <p className="text-[11px] uppercase tracking-wide text-faint">{label}</p>
+      <p className="mt-0.5 font-mono text-sm text-ink">{value}</p>
     </div>
   )
 }
 
+const SERIES = [
+  { name: 'reserved', className: 'stroke-kicker', swatch: 'bg-kicker', key: 'reserved' as const },
+  { name: 'available', className: 'stroke-brand', swatch: 'bg-brand', key: 'available' as const },
+  { name: 'spent', className: 'stroke-bad', swatch: 'bg-bad', key: 'spent' as const },
+]
+
 function Chart({ snapshots }: { snapshots: BudgetSnapshot[] }) {
-  const reserved = snapshots.map((s) => s.reserved)
-  const available = snapshots.map((s) => s.available)
-  const spent = snapshots.map((s) => s.spent)
   const yMax = Math.max(...snapshots.map(total), 1)
   const innerH = H - PAD.top - PAD.bottom
 
-  const series = [
-    { name: 'reserved', values: reserved, stroke: '#0d9488' },
-    { name: 'available', values: available, stroke: '#2563eb' },
-    { name: 'spent', values: spent, stroke: '#dc2626' },
-  ]
-
   return (
     <div className="overflow-x-auto">
-      <svg viewBox={`0 0 ${W} ${H}`} className="min-w-[600px]" role="img" aria-label="Reserved budget over the run">
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full min-w-[600px] max-w-[880px]" role="img" aria-label="Reserved budget over the run">
         {[0, 0.25, 0.5, 0.75, 1].map((t) => {
           const y = PAD.top + innerH * (1 - t)
           return (
             <g key={t}>
-              <line x1={PAD.left} y1={y} x2={W - PAD.right} y2={y} stroke="#f1f5f9" />
-              <text x={PAD.left - 8} y={y + 3} textAnchor="end" className="fill-gray-400 text-[10px]">
+              <line x1={PAD.left} y1={y} x2={W - PAD.right} y2={y} className="stroke-border" />
+              <text x={PAD.left - 8} y={y + 3} textAnchor="end" className="fill-faint text-[10px]">
                 {rupees(yMax * t)}
               </text>
             </g>
           )
         })}
-        {series.map((s) => (
-          <path key={s.name} d={linePath(s.values, yMax)} fill="none" stroke={s.stroke} strokeWidth={2} />
+        {SERIES.map((s) => (
+          <path
+            key={s.name}
+            d={linePath(snapshots.map((snap) => snap[s.key]), yMax)}
+            fill="none"
+            className={s.className}
+            strokeWidth={2}
+          />
         ))}
-        <text x={PAD.left} y={H - 8} className="fill-gray-400 text-[10px]">
+        <text x={PAD.left} y={H - 8} className="fill-faint text-[10px]">
           arrival order → ({snapshots.length} allocation decisions)
         </text>
       </svg>
-      <div className="mt-2 flex flex-wrap gap-4 text-xs">
-        {series.map((s) => (
+      <div className="mt-2 flex flex-wrap gap-4 text-xs text-muted">
+        {SERIES.map((s) => (
           <span key={s.name} className="flex items-center gap-1.5">
-            <span className="inline-block h-2 w-4 rounded" style={{ backgroundColor: s.stroke }} />
+            <span className={`inline-block h-2 w-4 rounded ${s.swatch}`} />
             {s.name}
           </span>
         ))}
@@ -86,12 +89,12 @@ export function BudgetTimelineView() {
     refetchInterval: 3000,
   })
 
-  if (isLoading) return <p className="text-gray-500">Loading budget timeline…</p>
-  if (isError) return <p className="text-red-600">{String(error)}</p>
+  if (isLoading) return <p className="text-muted">Loading budget timeline…</p>
+  if (isError) return <p className="text-bad">{String(error)}</p>
   if (!data || data.length === 0) {
     return (
-      <p className="text-gray-500">
-        No allocation decisions yet. Run <code className="rounded bg-gray-100 px-1">uv run python -m app.demo_seed</code>.
+      <p className="rounded-lg border border-warn/30 bg-warn-wash px-3 py-2.5 text-sm text-warn">
+        No allocation decisions yet. Run <span className="codechip">uv run python -m app.demo_seed</span>.
       </p>
     )
   }
@@ -101,9 +104,8 @@ export function BudgetTimelineView() {
 
   return (
     <div className="space-y-4">
-      <p className="text-sm text-gray-500">
-        The Reserved Budget (CONTEXT.md) as a moving quantity — one point per Streaming Allocator decision, in the order
-        cases arrived.
+      <p className="text-sm text-muted">
+        The Reserved Budget as a moving quantity — one point per Streaming Allocator decision, in the order cases arrived.
       </p>
 
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
@@ -115,14 +117,14 @@ export function BudgetTimelineView() {
         <Stat label="funded" value={`${funded}/${data.length}`} />
       </div>
 
-      <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+      <div className="card p-4">
         <Chart snapshots={data} />
       </div>
 
-      <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
-        Disclosed gap (ADR-0010): no Intervention yet carries a real incentive cost, so <code>spent</code> stays at 0 and
-        the reserve holds flat at a third of the budget. The trace is the real ledger, decision by decision; the
-        reserve-vs-mediocre-case mechanism is exercised in <code>tests/test_allocator.py</code>.
+      <p className="rounded-lg border border-warn/30 bg-warn-wash p-3 text-xs text-warn">
+        Disclosed gap (ADR-0010): no Intervention yet carries a real incentive cost, so <span className="codechip">spent</span>{' '}
+        stays at 0 and the reserve holds flat at a third of the budget. The trace is the real ledger, decision by decision;
+        the reserve-vs-mediocre-case mechanism is exercised in <span className="codechip">tests/test_allocator.py</span>.
       </p>
     </div>
   )

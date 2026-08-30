@@ -38,8 +38,12 @@ _Avoid_: Payment Retry (that term is reserved for the failed-payment workflow, t
 The deterministic component that validates an AI-proposed intervention against merchant-defined constraints (max discount, recovery budget, retry ceiling, escalation thresholds) before anything executes. The AI proposes; it never acts on money directly.
 _Avoid_: Guardrails (fine informally; Policy Engine is the canonical component name)
 
+**Incentive**:
+A merchant-funded sweetener — a discount or account credit — bundled with a Payment Retry or Resume Charge to raise the odds the customer completes. Its cost (`incentive_amount`, paise) is what the Policy Engine and Streaming Allocator gate, and it is drawn against the Recovery Budget. An intervention carrying no incentive is still a valid, zero-cost attempt; `NO_ACTION` never carries one ([[0014-flat-incentive-response-learnable-deferred]]).
+_Avoid_: Discount (one form an incentive can take; "incentive" is the budgeted concept)
+
 **Recovery Budget**:
-The merchant-defined ceiling on total incentive/intervention spend across a population of cases. Cases are allocated against it as a stream, not a known-upfront batch ([[0003-streaming-allocation]]) — the system maximizes net recovery, not case count, without foresight into cases that haven't arrived yet.
+The merchant-defined ceiling on total Incentive spend across a population of cases. Cases are allocated against it as a stream, not a known-upfront batch ([[0003-streaming-allocation]]) — the system maximizes net recovery, not case count, without foresight into cases that haven't arrived yet.
 
 **Reserved Budget**:
 The portion of the Recovery Budget the streaming allocator deliberately withholds at any given moment, against the expectation that better-value cases may still arrive. Distinct from spent budget (already committed to executed interventions) and available budget (spendable right now without touching the reserve).

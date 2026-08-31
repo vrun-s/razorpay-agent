@@ -24,11 +24,17 @@ def test_case_flows_through_the_full_existing_engine(client):
     assert "case_created" in entry_types
     assert "decision" in entry_types
     assert "policy_check" in entry_types
-    assert "allocation_check" in entry_types
+    # Ticket 19/ADR-0014: HALTED_SUBSCRIPTION's case_value is always 0
+    # (ticket 12's disclosed Plan-amount gap), so RESUME_CHARGE's
+    # incentive_amount computes to 0 too and the Streaming Allocator is
+    # never consulted -- distinct from a decline, no allocation_check entry
+    # at all.
+    assert "allocation_check" not in entry_types
     assert "execution" in entry_types
 
     execution_entry = next(e for e in case["history"] if e["entry_type"] == "execution")
     assert execution_entry["data"]["intervention"] == "resume_charge"
+    assert execution_entry["data"]["incentive_amount"] == 0
 
 
 def test_invalidly_signed_payload_is_rejected(client):

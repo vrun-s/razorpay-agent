@@ -48,6 +48,41 @@ def test_resume_charge_resolves_resume_charge_and_returns_the_shared_shape():
     assert gateway.last_outcome in (True, False)
 
 
+def test_create_payment_link_forwards_incentive_amount_to_resolve():
+    """ADR-0014: create_payment_link's incentive_amount reaches the outcome
+    draw via resolve(), checked by matching against the generator's own
+    resolve_intervention called directly with the same incentive_amount."""
+    [case] = generate_population(seed=5, size=1)
+    gateway = SimulatorGateway(case.hidden, rng=random.Random(42))
+
+    gateway.create_payment_link(
+        case_id="case-1", amount=50000, currency="INR", description="x", customer_contact={}, incentive_amount=2_500
+    )
+
+    expected = resolve_intervention(
+        case, Intervention.PAYMENT_RETRY, prior_attempts_of_this_intervention=0, rng=random.Random(42), incentive_amount=2_500
+    )
+    assert gateway.last_outcome == expected
+
+
+def test_resolve_with_incentive_amount_differs_from_resolve_without_it_statistically():
+    """A large sample's hit rate should trend upward when every draw carries
+    a real incentive_amount, mirroring the fatigue-decay statistical check
+    below."""
+    [case] = generate_population(seed=11, size=1)
+    trials = 400
+
+    def hit_rate(incentive_amount: int) -> float:
+        hits = 0
+        for i in range(trials):
+            gateway = SimulatorGateway(case.hidden, rng=random.Random(2000 + i))
+            if gateway.resolve(Intervention.PAYMENT_RETRY, incentive_amount=incentive_amount):
+                hits += 1
+        return hits / trials
+
+    assert hit_rate(2_500) > hit_rate(0)
+
+
 def test_parse_webhook_extracts_event_and_payload_same_as_other_gateways():
     gateway = _gateway()
     body = json.dumps({"event": "payment.failed", "payload": {"payment": {"entity": {"id": "pay_1"}}}}).encode()

@@ -120,12 +120,6 @@ export function BudgetTimelineView() {
       <div className="card p-4">
         <Chart snapshots={data} />
       </div>
-
-      <p className="rounded-lg border border-warn/30 bg-warn-wash p-3 text-xs text-warn">
-        Disclosed gap (ADR-0010): no Intervention yet carries a real incentive cost, so <span className="codechip">spent</span>{' '}
-        stays at 0 and the reserve holds flat at a third of the budget. The trace is the real ledger, decision by decision;
-        the reserve-vs-mediocre-case mechanism is exercised in <span className="codechip">tests/test_allocator.py</span>.
-      </p>
     </div>
   )
 }

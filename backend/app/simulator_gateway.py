@@ -39,19 +39,24 @@ class SimulatorGateway:
         self._attempts: dict[Intervention, int] = {}
         self.last_outcome: bool | None = None
 
-    def resolve(self, intervention: Intervention) -> bool:
+    def resolve(self, intervention: Intervention, *, incentive_amount: int = 0) -> bool:
         """Draws this case's outcome for `intervention`, applying fatigue decay
-        for however many times it's already been resolved on this case.
+        for however many times it's already been resolved on this case, plus
+        (ADR-0014) the flat Incentive uplift when `incentive_amount > 0`.
 
         Exposed as a public method (not just used internally by
         `create_payment_link`/`resume_charge`) because `NO_ACTION` has no
         Gateway call to hang an outcome off of -- its spontaneous-recovery
         outcome is resolved the same way here, just invoked by a different
-        caller (`app/simulator_driver.py`).
+        caller (`app/simulator_driver.py`), always with no incentive.
         """
         prior_attempts = self._attempts.get(intervention, 0)
         outcome = resolve_intervention(
-            self._case, intervention, prior_attempts_of_this_intervention=prior_attempts, rng=self._rng
+            self._case,
+            intervention,
+            prior_attempts_of_this_intervention=prior_attempts,
+            rng=self._rng,
+            incentive_amount=incentive_amount,
         )
         self._attempts[intervention] = prior_attempts + 1
         self.last_outcome = outcome
@@ -65,8 +70,9 @@ class SimulatorGateway:
         currency: str,
         description: str,
         customer_contact: dict[str, str],
+        incentive_amount: int = 0,
     ) -> PaymentLinkResult:
-        self.resolve(Intervention.PAYMENT_RETRY)
+        self.resolve(Intervention.PAYMENT_RETRY, incentive_amount=incentive_amount)
         link_id = f"plink_sim_{uuid4().hex[:14]}"
         return PaymentLinkResult(
             payment_link_id=link_id,
@@ -74,8 +80,8 @@ class SimulatorGateway:
             status="created",
         )
 
-    def resume_charge(self, *, case_id: str, subscription_id: str) -> ResumeChargeResult:
-        self.resolve(Intervention.RESUME_CHARGE)
+    def resume_charge(self, *, case_id: str, subscription_id: str, incentive_amount: int = 0) -> ResumeChargeResult:
+        self.resolve(Intervention.RESUME_CHARGE, incentive_amount=incentive_amount)
         return ResumeChargeResult(subscription_id=subscription_id, status="charge_pending")
 
     def parse_webhook(self, *, headers: dict[str, str], raw_body: bytes) -> ParsedWebhookEvent:

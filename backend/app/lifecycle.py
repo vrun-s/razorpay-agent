@@ -19,6 +19,7 @@ from app.decision import VALID_INTERVENTIONS, DecisionInput, decide, resolve_cel
 from app.estimator import CustomerHistory, get_estimator
 from app.gateway import Gateway
 from app.llm import LLMClient, get_llm_client
+from app.merchant_config import DEFAULT_MERCHANT_CONFIG, MerchantConfig
 from app.models import (
     CaseHistoryEntry,
     CaseHistoryEntryType,
@@ -35,6 +36,42 @@ from app.policy import DEFAULT_POLICY_CONFIG, PolicyConfig, ProposedIntervention
 # count only grows), so the case is force-stopped rather than left open to
 # be rejected identically on every future cycle.
 _SEQUENCE_BOUND_CONSTRAINTS = {"max_payment_retries", "max_interventions_per_customer"}
+
+# ADR-0014: the Decision Engine's own assumption of the Synthetic Merchant
+# Simulator's flat incentive uplift (app.simulator.response_curves.
+# INCENTIVE_UPLIFT) -- duplicated here as an independent constant rather than
+# imported, mirroring app/allocator.py's `_DEFAULT_MIN_QUALITY_SCORE`
+# precedent: decision-making code must never import the frozen simulator's
+# ground-truth constants (ADR-0007), even a uniform, non-persona-specific one
+# like this. Must stay numerically equal to that constant -- both anchor the
+# same "is the incentive spend EV-positive" claim from opposite sides of the
+# simulator<->decision-making seam.
+_ASSUMED_INCENTIVE_UPLIFT = 0.10
+
+
+def _incentive_worthwhile(incentive_pct: float) -> bool:
+    """ADR-0014's fixed rule for proposing the Incentive: EV-positive by
+    construction whenever the assumed uplift in recovery probability beats
+    the Incentive's cost as a fraction of case value. A fixed comparison of
+    two constants, not a learned decision -- re-evaluated per call in case
+    `incentive_pct` is ever tuned away from the shipped default.
+    """
+    return _ASSUMED_INCENTIVE_UPLIFT > incentive_pct / 100
+
+
+def _incentive_amount_for(intervention: Intervention, case_value: int, merchant_config: MerchantConfig) -> int:
+    """ADR-0014: `incentive_amount = round(case_value * incentive_pct / 100)`
+    for a cost-bearing proposal only -- `NO_ACTION` never carries one.
+    Naturally resolves to 0 for a `HALTED_SUBSCRIPTION` case's
+    `RESUME_CHARGE` proposal too, since `case_value` is always 0 there
+    (ticket 12's disclosed Plan-amount gap): that workflow stays outside the
+    budget game by construction, not a special case here.
+    """
+    if intervention == Intervention.NO_ACTION:
+        return 0
+    if not _incentive_worthwhile(merchant_config.incentive_pct):
+        return 0
+    return round(case_value * merchant_config.incentive_pct / 100)
 
 
 def _now() -> datetime:
@@ -103,6 +140,7 @@ def run_decision_cycle(
     llm_client: LLMClient | None = None,
     qualitative_signal: str | None = None,
     allocator: StreamingAllocator | None = None,
+    merchant_config: MerchantConfig | None = None,
 ) -> RecoveryCase:
     """Runs one Reassessment: decide -> sequence-bound check -> policy check -> allocation check -> maybe execute.
 
@@ -118,6 +156,7 @@ def run_decision_cycle(
     policy = policy or DEFAULT_POLICY_CONFIG
     llm_client = llm_client or get_llm_client()
     allocator = allocator or get_allocator()
+    merchant_config = merchant_config or DEFAULT_MERCHANT_CONFIG
 
     failure_reason = _failure_reason_for_case(case, payment, llm_client)
     decision_input = DecisionInput(
@@ -145,10 +184,15 @@ def run_decision_cycle(
         },
     )
 
-    proposal = ProposedIntervention(intervention=intervention)
-    policy_result = validate(
-        case, proposal, policy, budget_spent_so_far=allocator.ledger.spent, case_value=payment.get("amount", 0)
-    )
+    case_value = payment.get("amount", 0)
+    incentive_amount = _incentive_amount_for(intervention, case_value, merchant_config)
+    # The Incentive is a discount bundled with the proposal (ADR-0014), so
+    # `discount_pct` and `incentive_amount` move together -- 0 for NO_ACTION
+    # or a never-worthwhile incentive, `incentive_pct` whenever a real cost
+    # is proposed.
+    discount_pct = merchant_config.incentive_pct if incentive_amount > 0 else 0.0
+    proposal = ProposedIntervention(intervention=intervention, discount_pct=discount_pct, incentive_amount=incentive_amount)
+    policy_result = validate(case, proposal, policy, budget_spent_so_far=allocator.ledger.spent, case_value=case_value)
     log_entry(
         session,
         case,
@@ -161,6 +205,7 @@ def run_decision_cycle(
             "proposed_value": policy_result.proposed_value,
             "reason": policy_result.reason,
             "escalate": policy_result.escalate,
+            "incentive_amount": incentive_amount,
         },
     )
 
@@ -169,7 +214,7 @@ def run_decision_cycle(
         if decision_output.escalate:
             reasons.append("LLM flagged qualitative escalation signal")
         if policy_result.escalate:
-            reasons.append(f"case value {payment.get('amount', 0)} met escalation_value_threshold {policy.escalation_value_threshold}")
+            reasons.append(f"case value {case_value} met escalation_value_threshold {policy.escalation_value_threshold}")
         _escalate_case(session, case, reason="; ".join(reasons))
         session.commit()
         session.refresh(case)
@@ -181,14 +226,22 @@ def run_decision_cycle(
         session.refresh(case)
         return case
 
-    allocation_decision = None
-    if policy_result.approved:
+    # ADR-0014: the Streaming Allocator gates the Incentive spend only -- a
+    # proposal that structurally never carried one (NO_ACTION, or a
+    # RESUME_CHARGE on a case_value=0 HALTED_SUBSCRIPTION case, per
+    # `_incentive_amount_for`) is never something the allocator was in the
+    # loop for at all, distinct from a genuine decline (see the module-level
+    # note above `_incentive_amount_for`). The base attempt below still
+    # executes whenever policy-approved, regardless of what the allocator
+    # decided -- a decline degrades it to a free retry, it never skips it.
+    funded_incentive_amount = 0
+    if policy_result.approved and incentive_amount > 0:
         allocation_decision = allocator.decide(
             AllocationCandidate(
                 case_id=case.id,
                 point_estimate=decision_output.point_estimate,
                 uncertainty=decision_output.uncertainty,
-                incentive_amount=proposal.incentive_amount,
+                incentive_amount=incentive_amount,
             )
         )
         log_entry(
@@ -204,15 +257,17 @@ def run_decision_cycle(
                 "reserved": allocation_decision.reserved,
             },
         )
+        if allocation_decision.funded:
+            funded_incentive_amount = incentive_amount
 
-    funded = allocation_decision is not None and allocation_decision.funded
-    if policy_result.approved and funded and intervention == Intervention.PAYMENT_RETRY:
+    if policy_result.approved and intervention == Intervention.PAYMENT_RETRY:
         result = gateway.create_payment_link(
             case_id=case.id,
             amount=payment.get("amount", 0),
             currency=payment.get("currency", "INR"),
             description=f"Complete your payment for order {payment.get('order_id', '')}",
             customer_contact={"email": payment.get("email", ""), "contact": payment.get("contact", "")},
+            incentive_amount=funded_incentive_amount,
         )
         log_entry(
             session,
@@ -224,10 +279,15 @@ def run_decision_cycle(
                 "short_url": result.short_url,
                 "status": result.status,
                 "intervention": intervention.value,
+                "incentive_amount": funded_incentive_amount,
             },
         )
-    elif policy_result.approved and funded and intervention == Intervention.RESUME_CHARGE:
-        result = gateway.resume_charge(case_id=case.id, subscription_id=case.external_reference_id or "")
+    elif policy_result.approved and intervention == Intervention.RESUME_CHARGE:
+        result = gateway.resume_charge(
+            case_id=case.id,
+            subscription_id=case.external_reference_id or "",
+            incentive_amount=funded_incentive_amount,
+        )
         log_entry(
             session,
             case,
@@ -237,6 +297,7 @@ def run_decision_cycle(
                 "subscription_id": result.subscription_id,
                 "status": result.status,
                 "intervention": intervention.value,
+                "incentive_amount": funded_incentive_amount,
             },
         )
 

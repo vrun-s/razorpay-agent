@@ -5,8 +5,16 @@ never knows or cares whether it's talking to the fake in-process gateway
 (this module's `FakeGateway`) or a real Razorpay-backed implementation
 (ticket 13). Both satisfy the same `Gateway` protocol.
 
-This exact shape is what tickets 03 and 13 build against; it must not need
-to change later.
+This exact shape is what tickets 03 and 13 build against, and was declared
+final at the time. Ticket 19 / ADR-0014 is the one documented, additive
+exception (the same kind of deliberate, disclosed revision ADR-0010 made to
+ADR-0009's Policy Engine shape): `create_payment_link`/`resume_charge` gain
+an `incentive_amount: int = 0` keyword-only parameter so `SimulatorGateway`
+(app/simulator_gateway.py) knows whether *this* execution carried a real
+Incentive and should apply the response-curve uplift. `FakeGateway` and
+`RazorpayGateway` accept and ignore it -- reflecting a real discount in what
+Razorpay is actually charged is out of this ticket's scope. Every existing
+caller that doesn't pass it keeps its old behavior unchanged.
 """
 
 from __future__ import annotations
@@ -65,9 +73,10 @@ class Gateway(Protocol):
         currency: str,
         description: str,
         customer_contact: dict[str, str],
+        incentive_amount: int = 0,
     ) -> PaymentLinkResult: ...
 
-    def resume_charge(self, *, case_id: str, subscription_id: str) -> ResumeChargeResult: ...
+    def resume_charge(self, *, case_id: str, subscription_id: str, incentive_amount: int = 0) -> ResumeChargeResult: ...
 
     def parse_webhook(self, *, headers: dict[str, str], raw_body: bytes) -> ParsedWebhookEvent: ...
 
@@ -83,6 +92,7 @@ class FakeGateway:
         currency: str,
         description: str,
         customer_contact: dict[str, str],
+        incentive_amount: int = 0,
     ) -> PaymentLinkResult:
         link_id = f"plink_fake_{uuid4().hex[:14]}"
         return PaymentLinkResult(
@@ -91,7 +101,7 @@ class FakeGateway:
             status="created",
         )
 
-    def resume_charge(self, *, case_id: str, subscription_id: str) -> ResumeChargeResult:
+    def resume_charge(self, *, case_id: str, subscription_id: str, incentive_amount: int = 0) -> ResumeChargeResult:
         return ResumeChargeResult(subscription_id=subscription_id, status="charge_pending")
 
     def parse_webhook(self, *, headers: dict[str, str], raw_body: bytes) -> ParsedWebhookEvent:
@@ -124,7 +134,11 @@ class RazorpayGateway:
         currency: str,
         description: str,
         customer_contact: dict[str, str],
+        incentive_amount: int = 0,
     ) -> PaymentLinkResult:
+        # `incentive_amount` is accepted (Gateway Protocol parity) but not yet
+        # applied to what Razorpay actually charges -- reflecting a real
+        # discount in the created link's amount is out of ticket 19's scope.
         customer = {k: v for k, v in customer_contact.items() if k in ("name", "email", "contact") and v}
         data = self._post(
             "/payment_links",
@@ -139,7 +153,7 @@ class RazorpayGateway:
         )
         return PaymentLinkResult(payment_link_id=data["id"], short_url=data["short_url"], status=data["status"])
 
-    def resume_charge(self, *, case_id: str, subscription_id: str) -> ResumeChargeResult:
+    def resume_charge(self, *, case_id: str, subscription_id: str, incentive_amount: int = 0) -> ResumeChargeResult:
         """Ticket-12 disclosed gap, real-integration side: Razorpay's `/resume`
         endpoint is documented for subscriptions in `paused` state, not
         `halted` -- there is no separate "resume from halted" API. This is

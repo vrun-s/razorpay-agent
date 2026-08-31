@@ -1,0 +1,79 @@
+{
+  "run_seed": 20260826,
+  "workflow_type": "failed_payment",
+  "arms": {
+    "no_intervention": {
+      "total_nrr": 1750000,
+      "case_count": 200,
+      "recovered_count": 35
+    },
+    "fixed_rule": {
+      "total_nrr": 6297500,
+      "case_count": 200,
+      "recovered_count": 144
+    },
+    "offline_optimal": {
+      "total_nrr": 6950000,
+      "case_count": 200,
+      "recovered_count": 139
+    },
+    "ai_treatment": {
+      "total_nrr": 6000000,
+      "case_count": 200,
+      "recovered_count": 130
+    }
+  },
+  "baselines": [
+    {
+      "baseline_name": "no_intervention",
+      "incremental_nrr": 21250.0,
+      "ci_lower": 17750.0,
+      "ci_upper": 24750.0
+    },
+    {
+      "baseline_name": "fixed_rule",
+      "incremental_nrr": -1487.5,
+      "ci_lower": -3400.0,
+      "ci_upper": 162.5
+    }
+  ],
+  "pct_of_offline_optimal": 0.8633093525179856,
+  "calibration": [
+    {
+      "bucket_low": 0.5,
+      "bucket_high": 0.6000000000000001,
+      "mean_predicted": 0.575,
+      "observed_rate": 0.5,
+      "count": 4
+    },
+    {
+      "bucket_low": 0.6000000000000001,
+      "bucket_high": 0.7000000000000001,
+      "mean_predicted": 0.6666666666666666,
+      "observed_rate": 1.0,
+      "count": 1
+    },
+    {
+      "bucket_low": 0.7000000000000001,
+      "bucket_high": 0.8,
+      "mean_predicted": 0.7658730158730159,
+      "observed_rate": 0.3,
+      "count": 10
+    },
+    {
+      "bucket_low": 0.8,
+      "bucket_high": 0.9,
+      "mean_predicted": 0.851166114832634,
+      "observed_rate": 0.35714285714285715,
+      "count": 28
+    },
+    {
+      "bucket_low": 0.9,
+      "bucket_high": 1.0,
+      "mean_predicted": 0.96649823288713,
+      "observed_rate": 0.34234234234234234,
+      "count": 333
+    }
+  ],
+  "split": "held_out"
+}

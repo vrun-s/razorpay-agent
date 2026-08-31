@@ -57,6 +57,7 @@ from sqlmodel import Session, SQLModel, create_engine
 from app.allocator import AllocationCandidate, BudgetLedger, StreamingAllocator
 from app.decision import VALID_INTERVENTIONS
 from app.estimator import reset_estimator
+from app.merchant_config import DEFAULT_MERCHANT_CONFIG
 from app.models import (
     CaseHistoryEntry,
     CaseHistoryEntryType,
@@ -265,7 +266,7 @@ def run_fixed_rule_arm(
             if not allocation.funded:
                 break
 
-            outcome = gateway.resolve(intervention)
+            outcome = gateway.resolve(intervention, incentive_amount=incentive_amount)
             total_cost += incentive_amount
             case.history.append(
                 CaseHistoryEntry(
@@ -336,12 +337,15 @@ def run_offline_optimal_arm(
     attempts replay the same per-case seed's draw sequence the other arms
     would see if they'd chosen that same intervention (ADR-0013 pairing).
 
-    Every candidate intervention costs 0 today (`ProposedIntervention.
-    incentive_amount` is always 0 outside the fixed-rule arm -- ADR-0010's
-    disclosed gap), so this degenerates to "recover for free whenever any
-    candidate can, within the attempt budget" with no budget tradeoff to
-    solve; a future ticket that gives interventions real cost would need
-    this to become a genuine budget-constrained knapsack over cases instead.
+    This arm's own candidates still cost 0, deliberately, unlike
+    `fixed_rule`/`ai_treatment` since ticket 19/ADR-0014: it has no Policy
+    Engine or Streaming Allocator in the loop at all (see this function's
+    first paragraph), so there is no budget to spend against -- it degenerates
+    to "recover for free whenever any candidate can, within the attempt
+    budget" with no budget tradeoff to solve. A future ticket that wants this
+    arm to also account for Incentive cost would need it to become a genuine
+    budget-constrained knapsack over cases instead -- out of this ticket's
+    scope, same as the rest of this arm's "no practical guardrails" design.
     """
     candidates = VALID_INTERVENTIONS[workflow_type]
     results = []
@@ -386,24 +390,38 @@ def run_ai_treatment_arm(
     Resets the shared `Estimator` singleton to cold-start first (see this
     module's docstring): this is the one arm whose online learning is the
     thing being evaluated, so it's also the one arm allowed to touch it.
+
+    Ticket 19/ADR-0014: `run_decision_cycle` now computes a real
+    `incentive_amount` for a cost-bearing proposal, so this arm needs its own
+    fresh `StreamingAllocator` too -- otherwise every case in the run would
+    fall through to `run_decision_cycle`'s default, the process-wide
+    singleton (app/allocator.py's `get_allocator()`), and one arm's spend
+    would leak into live traffic's ledger or a later evaluation run's. Built
+    against the canonical `DEFAULT_MERCHANT_CONFIG` (never a tuned demo
+    value, per ADR-0014's evaluation-integrity boundary) and shared across
+    every case in this call, mirroring the sibling baseline arms' "fresh
+    per-arm allocator instance."
     """
     reset_estimator()
     engine = _ephemeral_engine()
     SQLModel.metadata.create_all(engine)
+    allocator = StreamingAllocator(
+        BudgetLedger(recovery_budget=DEFAULT_MERCHANT_CONFIG.recovery_budget, reserve_ratio=1 / 3)
+    )
 
     results = []
     resolved_decisions: list[ResolvedDecision] = []
     with Session(engine) as session:
         for simulated in cases:
             outcome = run_simulated_case(
-                session, simulated, workflow_type=workflow_type, rng=random.Random(_case_seed(run_seed, simulated.case_index))
+                session,
+                simulated,
+                workflow_type=workflow_type,
+                rng=random.Random(_case_seed(run_seed, simulated.case_index)),
+                allocator=allocator,
             )
             resolved_decisions.extend(outcome.resolved_decisions)
-            # ADR-0010's disclosed gap: the live system's ProposedIntervention
-            # never carries a real incentive_amount (always 0), so the AI
-            # arm's EXECUTION entries never log one either -- this arm's
-            # incentive_cost is always 0 today, unlike fixed_rule's.
-            incentive_cost = 0
+            incentive_cost = _total_incentive_cost(outcome.case)
             gross = case_value if outcome.recovered else 0
             chosen = _last_decided_intervention(outcome.case)
             results.append(
@@ -416,6 +434,19 @@ def run_ai_treatment_arm(
                 )
             )
     return ArmResult(name="ai_treatment", case_results=results, resolved_decisions=resolved_decisions)
+
+
+def _total_incentive_cost(case: RecoveryCase) -> int:
+    """Sum of `incentive_amount` actually incurred across every EXECUTION
+    entry on this case (ADR-0013: "the sum of incentive amounts actually
+    incurred across every intervention executed on that case") -- a case can
+    be executed on more than once across reassessment cycles, same as
+    `fixed_rule`'s own `total_cost` accumulation."""
+    return sum(
+        int(entry.data.get("incentive_amount", 0))
+        for entry in case.history
+        if entry.entry_type == CaseHistoryEntryType.EXECUTION
+    )
 
 
 def _last_decided_intervention(case: RecoveryCase) -> Intervention | None:

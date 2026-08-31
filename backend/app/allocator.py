@@ -19,12 +19,10 @@ draw against the reserve -- the mechanism that lets a mediocre case be
 declined while a later, better one in the same run still gets funded.
 
 `AllocationCandidate.incentive_amount` mirrors `ProposedIntervention`'s field
-(ADR-0010) -- always 0 in today's live flow, since no ticket yet gives an
-Intervention a real discount/incentive cost (the same disclosed gap
-ADR-0010 already notes for the Policy Engine's `max_discount_pct`/
-`recovery_budget`). The reserve mechanism itself is real and tested; it just
-has nothing to decline against a free proposal until that future ticket
-lands.
+(ADR-0010) -- a real, non-zero Incentive cost as of ticket 19/ADR-0014 for a
+`PAYMENT_RETRY`/`RESUME_CHARGE` proposal on a case with a non-zero
+`case_value`. The reserve mechanism is what actually declines one of these
+now, not just tested against a free proposal.
 """
 
 from __future__ import annotations
@@ -32,7 +30,7 @@ from __future__ import annotations
 import threading
 from dataclasses import dataclass, field
 
-from app.policy import DEFAULT_POLICY_CONFIG
+from app.merchant_config import DEFAULT_MERCHANT_CONFIG
 
 # The estimator's own cold-start prior (Beta(2,2) mean, app/estimator.py) --
 # a candidate must beat coin-flip odds, conservatively, to draw against the
@@ -145,13 +143,12 @@ _default_allocator: StreamingAllocator | None = None
 def get_allocator() -> StreamingAllocator:
     """Process-wide default, mirroring app/estimator.py's `get_estimator()`
     singleton pattern (ADR-0008: no external state store, single-process
-    demo). Built against DEFAULT_POLICY_CONFIG's own recovery_budget -- the
-    Policy Engine's ceiling and the allocator's ledger are two independently
-    configured views of the same merchant-set number until a real
-    merchant-config object unifies them (future work, not this ticket's).
+    demo). Built against `DEFAULT_MERCHANT_CONFIG.recovery_budget` -- the same
+    number `DEFAULT_POLICY_CONFIG.recovery_budget` (app/policy.py) derives
+    from, per ticket 19's unification.
     """
     global _default_allocator
     if _default_allocator is None:
-        ledger = BudgetLedger(recovery_budget=DEFAULT_POLICY_CONFIG.recovery_budget, reserve_ratio=_DEFAULT_RESERVE_RATIO)
+        ledger = BudgetLedger(recovery_budget=DEFAULT_MERCHANT_CONFIG.recovery_budget, reserve_ratio=_DEFAULT_RESERVE_RATIO)
         _default_allocator = StreamingAllocator(ledger)
     return _default_allocator

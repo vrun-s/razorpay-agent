@@ -7,7 +7,13 @@ import pytest
 from app.models import Intervention
 from app.simulator.generator import generate_population, resolve_intervention
 from app.simulator.personas import PERSONA_MIX, Persona
-from app.simulator.response_curves import BASE_RESPONSE_CURVES, SIMULATOR_VERSION, decayed_probability
+from app.simulator.response_curves import (
+    BASE_RESPONSE_CURVES,
+    INCENTIVE_UPLIFT,
+    SIMULATOR_VERSION,
+    decayed_probability,
+    response_probability,
+)
 
 SIMULATOR_DIR = Path(__file__).resolve().parent.parent / "app" / "simulator"
 DECISION_ENGINE_FILE = SIMULATOR_DIR.parent / "decision.py"
@@ -40,6 +46,38 @@ def test_every_persona_has_a_fully_specified_response_curve():
 
 def test_simulator_version_is_set():
     assert SIMULATOR_VERSION
+
+
+def test_simulator_version_bumped_for_ticket_19_incentive_uplift():
+    """ADR-0014: the flat incentive-uplift mechanism is a response-curve
+    version bump, invalidating comparability with any prior evaluation run."""
+    assert SIMULATOR_VERSION == "response-curves-v2"
+
+
+# -- Ticket 19: flat incentive uplift (ADR-0014) -----------------------------
+
+
+def test_response_probability_with_no_incentive_matches_decayed_probability():
+    for prior_attempts in range(3):
+        assert response_probability(0.4, prior_attempts) == decayed_probability(0.4, prior_attempts)
+
+
+def test_response_probability_adds_the_uplift_when_incentive_amount_is_positive():
+    base = 0.4
+    without = response_probability(base, 0, incentive_amount=0)
+    with_incentive = response_probability(base, 0, incentive_amount=2_500)
+
+    assert with_incentive == pytest.approx(without + INCENTIVE_UPLIFT)
+
+
+def test_response_probability_is_clamped_to_one():
+    assert response_probability(0.95, 0, incentive_amount=1) == pytest.approx(1.0)
+
+
+def test_response_probability_uplift_is_uniform_regardless_of_incentive_size():
+    # Only *whether* incentive_amount > 0 matters, not its magnitude --
+    # ADR-0014's flat uplift, not a learned discount-sensitivity curve.
+    assert response_probability(0.4, 0, incentive_amount=1) == response_probability(0.4, 0, incentive_amount=999_999)
 
 
 def test_generate_population_is_deterministic_for_a_fixed_seed():

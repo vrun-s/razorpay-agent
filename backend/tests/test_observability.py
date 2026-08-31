@@ -42,9 +42,9 @@ def test_budget_timeline_has_one_snapshot_per_allocation_decision_oldest_first(c
     assert [s.timestamp for s in timeline] == sorted(s.timestamp for s in timeline)
     first = timeline[0]
     assert first.funded is True
-    # ADR-0010 disclosed gap: incentive_amount is 0, so nothing is ever spent
-    # and the reserve holds at a third of the default budget.
-    assert first.spent == 0
+    # Ticket 19/ADR-0014: the proposal carries a real incentive_amount (5% of
+    # the payload's 50_000 amount), so spend genuinely moves.
+    assert first.spent == 2_500
     assert first.reserved > 0
     assert first.available > 0
 

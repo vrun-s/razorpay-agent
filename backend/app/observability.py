@@ -49,12 +49,16 @@ def budget_timeline(session: Session) -> list[BudgetSnapshot]:
     """Every allocation decision made so far, oldest-first -- the moving
     Reserved Budget quantity test2108.md §13 item 2 wants visible.
 
-    Note (ADR-0010's disclosed gap): every live `ProposedIntervention`
-    carries `incentive_amount = 0` today, so `spent` stays 0 and `reserved`
-    holds flat at `reserve_ratio` of the whole budget. The trace is still the
-    real ledger, decision by decision; the reserve mechanism that would
-    decline a mediocre case is exercised in tests/test_allocator.py, not
-    fabricated here.
+    Ticket 19/ADR-0014: a `PAYMENT_RETRY`/`RESUME_CHARGE` proposal on a
+    non-zero-value case now carries a real `incentive_amount`, so `spent`
+    genuinely moves and `reserved` genuinely shrinks as the run progresses --
+    not a flat line. Only an ALLOCATION_CHECK entry the Streaming Allocator
+    was actually consulted for appears here at all (app/lifecycle.py's
+    `run_decision_cycle`): a proposal that structurally never carried an
+    Incentive (`NO_ACTION`, or `RESUME_CHARGE` on a case_value=0
+    `HALTED_SUBSCRIPTION` case) logs no entry, so this trace never shows a
+    misleading stream of "declined" points for a spend that was never on the
+    table.
     """
     entries = session.exec(
         select(CaseHistoryEntry)

@@ -7,7 +7,13 @@ makes every beat test2108.md §13 asks for visible in the dashboard:
 - a policy rejection that names the constraint that bound it,
 - an escalation with a human override written back to the audit trail,
 - a standing escalation left in the queue for the demo to act on live,
-- bulk cases so the Reserved Budget trace has length.
+- bulk cases so the Reserved Budget trace has length,
+- ticket 19/ADR-0014's reserve-mechanism beat: a mediocre case's real
+  Incentive spend visibly declined, then a stronger case's funded from the
+  reserve (spec story 31) -- on a `recovery_budget` deliberately sized below
+  what the two cases' incentives would cost together, and ordered
+  mediocre-then-better. This sizing/ordering is demo-only tuning (ADR-0014):
+  the evaluation harness never reads it.
 
 Run it with `uv run python -m app.demo_seed` (wipes and reseeds). Everything
 flows through the real app/lifecycle.py engine with the `FakeGateway` /
@@ -31,6 +37,7 @@ from app.estimator import (
 )
 from app.gateway import FakeGateway, Gateway
 from app.lifecycle import log_entry, mark_recovered, override_case, run_decision_cycle
+from app.merchant_config import DEFAULT_MERCHANT_CONFIG, MerchantConfig
 from app.models import (
     CaseHistoryEntry,
     CaseHistoryEntryType,
@@ -41,16 +48,39 @@ from app.models import (
     RecoveryCase,
     WorkflowType,
 )
-from app.policy import DEFAULT_POLICY_CONFIG, PolicyConfig
+from app.policy import PolicyConfig
 
 # A restrictive config used for exactly one seeded case, so its first
 # proposal is rejected on a sequence-bound constraint (and the case is then
 # force-stopped) -- the policy-rejection beat.
 _RETRY_CEILING_ZERO = PolicyConfig(
-    max_discount_pct=20.0, max_payment_retries=0, max_interventions_per_customer=5, recovery_budget=1_000_000
+    max_discount_pct=20.0,
+    max_payment_retries=0,
+    max_interventions_per_customer=5,
+    recovery_budget=DEFAULT_MERCHANT_CONFIG.recovery_budget,
 )
 
 _ESCALATION_SIGNAL = "This is an absolute scam and I am furious — I want to speak to a lawyer."
+
+# ADR-0014: walkthrough-only tuning, never read by the evaluation harness
+# (app/evaluation.py keeps DEFAULT_MERCHANT_CONFIG). Sized so one 50_000
+# case's 5% incentive (2_500) can't be funded from `available` alone (2/3 of
+# the budget) but fits inside `remaining` -- forcing a genuine reserve-quality
+# decision instead of an outright "budget exhausted" rejection.
+_RESERVE_DEMO_MERCHANT_CONFIG = MerchantConfig(recovery_budget=3_600, incentive_pct=5.0)
+
+# The Policy Engine's own recovery_budget must track the same figure (ADR-0014's
+# "the two independently-configured copies... collapse behind the one
+# MerchantConfig") -- otherwise this scenario's decline would come from
+# validate()'s hard budget reject (a policy violation) instead of the
+# Streaming Allocator's reserve-quality gate, misrepresenting which mechanism
+# is actually being demonstrated. Same pattern as `_RETRY_CEILING_ZERO` above.
+_RESERVE_DEMO_POLICY_CONFIG = PolicyConfig(
+    max_discount_pct=20.0,
+    max_payment_retries=3,
+    max_interventions_per_customer=5,
+    recovery_budget=_RESERVE_DEMO_MERCHANT_CONFIG.recovery_budget,
+)
 
 
 def _failed_payment(payment_id: str, *, decline: str = "insufficient funds in account") -> dict[str, Any]:
@@ -106,7 +136,7 @@ def seed_demo(session: Session, gateway: Gateway | None = None) -> list[Recovery
     _wipe(session)
 
     allocator = StreamingAllocator(
-        BudgetLedger(recovery_budget=DEFAULT_POLICY_CONFIG.recovery_budget, reserve_ratio=1 / 3)
+        BudgetLedger(recovery_budget=DEFAULT_MERCHANT_CONFIG.recovery_budget, reserve_ratio=1 / 3)
     )
     cases: list[RecoveryCase] = []
 
@@ -175,6 +205,51 @@ def seed_demo(session: Session, gateway: Gateway | None = None) -> list[Recovery
                 reason=f"payment {pid} captured", trigger="payment.captured",
             )
         cases.append(bulk)
+
+    # 7. Reserve mechanism made visible with real Incentive money (spec
+    #    story 31, ADR-0014): `_RESERVE_DEMO_MERCHANT_CONFIG` sizes
+    #    recovery_budget below what these two cases' incentives would cost
+    #    together, on its own allocator so the rest of the run's spend can't
+    #    interfere. Ordered mediocre-then-better: the mediocre case's
+    #    incentive is genuinely declined (it still executes, degraded to a
+    #    free retry per ADR-0014 -- not skipped); the better case's is
+    #    funded from the reserve.
+    reserve_allocator = StreamingAllocator(
+        BudgetLedger(recovery_budget=_RESERVE_DEMO_MERCHANT_CONFIG.recovery_budget, reserve_ratio=1 / 3)
+    )
+    # Warm the "better" case's cell well above the reserve-quality bar before
+    # it's decided -- same trick as the NO_ACTION cell above, a distinct
+    # decline text (`bank_server_error`) so pumping it can't sway any other
+    # case's cell.
+    better_key = EstimatorCellKey(
+        failure_reason="bank_server_error",
+        customer_segment_proxy=CustomerSegmentProxy.NEW,
+        intervention=Intervention.PAYMENT_RETRY,
+    )
+    for _ in range(30):
+        get_estimator().update(better_key, source=EventSource.SIMULATED, success=True)
+
+    mediocre_payment = _failed_payment("pay_demo_reserve_mediocre", decline="invalid card details entered")
+    mediocre = _create_case(session, mediocre_payment)
+    run_decision_cycle(
+        session, gateway, mediocre, payment=mediocre_payment,
+        merchant_config=_RESERVE_DEMO_MERCHANT_CONFIG, policy=_RESERVE_DEMO_POLICY_CONFIG,
+        allocator=reserve_allocator,
+    )
+    cases.append(mediocre)
+
+    better_payment = _failed_payment("pay_demo_reserve_better", decline="bank server timeout")
+    better = _create_case(session, better_payment)
+    run_decision_cycle(
+        session, gateway, better, payment=better_payment,
+        merchant_config=_RESERVE_DEMO_MERCHANT_CONFIG, policy=_RESERVE_DEMO_POLICY_CONFIG,
+        allocator=reserve_allocator,
+    )
+    mark_recovered(
+        session, better, event_id="evt_outcome_reserve_better",
+        reason="payment pay_demo_reserve_better captured", trigger="payment.captured",
+    )
+    cases.append(better)
 
     return cases
 

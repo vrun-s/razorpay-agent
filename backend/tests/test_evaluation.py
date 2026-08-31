@@ -140,6 +140,28 @@ def test_fixed_rule_arm_incurs_a_flat_5pct_discount_cost_per_attempt():
         assert result.incentive_cost % 5_000 == 0  # 5% of 100_000 per attempt, always a whole multiple
 
 
+def test_fixed_rule_arm_passes_its_incentive_amount_into_the_gateways_resolve_call(monkeypatch):
+    """ticket 19/ADR-0014: fixed_rule's flat discount is real money now, so
+    its execution draws should get the same simulator uplift ai_treatment's
+    funded proposals do -- not a cost with no effect on the outcome."""
+    from app.simulator_gateway import SimulatorGateway
+
+    seen_incentive_amounts: list[int] = []
+    original_resolve = SimulatorGateway.resolve
+
+    def _recording_resolve(self, intervention, *, incentive_amount=0):
+        seen_incentive_amounts.append(incentive_amount)
+        return original_resolve(self, intervention, incentive_amount=incentive_amount)
+
+    monkeypatch.setattr(SimulatorGateway, "resolve", _recording_resolve)
+
+    cases = generate_population(seed=17, size=10)
+    run_fixed_rule_arm(cases, workflow_type=WorkflowType.FAILED_PAYMENT, case_value=100_000, run_seed=17)
+
+    assert seen_incentive_amounts  # at least one attempt was made
+    assert any(amount > 0 for amount in seen_incentive_amounts)
+
+
 def test_fixed_rule_arm_stops_retrying_once_the_sequence_bound_is_hit():
     """The same Policy Engine every other arm uses (app/policy.py) caps
     max_payment_retries -- a tight policy should visibly cap attempts."""
@@ -228,6 +250,35 @@ def test_ai_treatment_arm_produces_resolved_decisions_for_calibration():
     assert arm.resolved_decisions
     for decision in arm.resolved_decisions:
         assert 0.0 <= decision.point_estimate <= 1.0
+
+
+# -- Ticket 19: real incentive cost flows through to the AI arm (ADR-0014) --
+
+
+def test_ai_treatment_arm_carries_a_real_incentive_cost():
+    """The old always-0 gap (ADR-0010) is gone: at least one case in a
+    reasonably-sized run pays the same case-value-scaled incentive rate
+    fixed_rule does, whenever its proposal was funded."""
+    cases = generate_population(seed=15, size=60)
+
+    arm = run_ai_treatment_arm(cases, workflow_type=WorkflowType.FAILED_PAYMENT, case_value=50_000, run_seed=15)
+
+    assert any(result.incentive_cost > 0 for result in arm.case_results)
+    for result in arm.case_results:
+        assert result.incentive_cost % 2_500 == 0  # whole multiples of 5% of 50_000 per funded attempt
+
+
+def test_ai_treatment_arm_does_not_leak_spend_across_separate_calls():
+    """Ticket 19: each call gets its own fresh StreamingAllocator -- back-to-
+    back calls (dev/validation/held-out within one evaluation run, or two
+    separate runs) must not see each other's ledger spend."""
+    cases = generate_population(seed=16, size=40)
+
+    first = run_ai_treatment_arm(cases, workflow_type=WorkflowType.FAILED_PAYMENT, case_value=50_000, run_seed=16)
+    second = run_ai_treatment_arm(cases, workflow_type=WorkflowType.FAILED_PAYMENT, case_value=50_000, run_seed=16)
+
+    assert [r.incentive_cost for r in first.case_results] == [r.incentive_cost for r in second.case_results]
+    assert [r.recovered for r in first.case_results] == [r.recovered for r in second.case_results]
 
 
 # -- Bootstrap CI (ADR-0013 exact procedure) -----------------------------------

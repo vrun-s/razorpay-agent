@@ -12,6 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from app.decision import VALID_INTERVENTIONS
+from app.merchant_config import DEFAULT_MERCHANT_CONFIG
 from app.models import CaseHistoryEntryType, Intervention, RecoveryCase
 
 
@@ -28,11 +29,14 @@ class PolicyConfig:
     escalation_value_threshold: int | None = None
 
 
+# ticket 19: `recovery_budget` derives from the one MerchantConfig object
+# instead of being independently set here (the disclosed gap app/allocator.py
+# used to flag) -- app/allocator.py's `get_allocator()` reads the same value.
 DEFAULT_POLICY_CONFIG = PolicyConfig(
     max_discount_pct=20.0,
     max_payment_retries=3,
     max_interventions_per_customer=5,
-    recovery_budget=1_000_000,  # INR 10,000 in paise
+    recovery_budget=DEFAULT_MERCHANT_CONFIG.recovery_budget,
     escalation_value_threshold=None,
 )
 

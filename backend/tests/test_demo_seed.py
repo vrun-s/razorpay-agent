@@ -4,7 +4,7 @@ import pytest
 
 from app.demo_seed import seed_demo
 from app.observability import budget_timeline, case_flags
-from app.models import CaseStatus
+from app.models import CaseHistoryEntryType, CaseStatus
 
 pytestmark = pytest.mark.usefixtures("isolated_estimator")
 
@@ -40,3 +40,26 @@ def test_seed_is_idempotent(session):
     assert len(first) == len(second)
     # Re-seeding wipes the prior run -- no orphaned history accumulates.
     assert len(budget_timeline(session)) == first_budget_points
+
+
+def test_seed_demonstrates_a_declined_then_funded_incentive(session):
+    """Ticket 19/ADR-0014, spec story 31: a mediocre case's real Incentive
+    spend is genuinely declined by the Streaming Allocator (not skipped --
+    the retry itself still executes, just for free), and a later, stronger
+    case's is funded from the reserve."""
+    cases = seed_demo(session)
+
+    mediocre = next(c for c in cases if c.external_reference_id == "pay_demo_reserve_mediocre")
+    better = next(c for c in cases if c.external_reference_id == "pay_demo_reserve_better")
+
+    mediocre_allocation = next(
+        e for e in mediocre.history if e.entry_type == CaseHistoryEntryType.ALLOCATION_CHECK
+    )
+    assert mediocre_allocation.data["funded"] is False
+    mediocre_execution = next(e for e in mediocre.history if e.entry_type == CaseHistoryEntryType.EXECUTION)
+    assert mediocre_execution.data["incentive_amount"] == 0
+
+    better_allocation = next(e for e in better.history if e.entry_type == CaseHistoryEntryType.ALLOCATION_CHECK)
+    assert better_allocation.data["funded"] is True
+    better_execution = next(e for e in better.history if e.entry_type == CaseHistoryEntryType.EXECUTION)
+    assert better_execution.data["incentive_amount"] > 0

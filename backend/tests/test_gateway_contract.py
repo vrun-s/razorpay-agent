@@ -74,6 +74,25 @@ def test_resume_charge_returns_a_resume_charge_result(gateway: Gateway):
     assert isinstance(result.status, str) and result.status
 
 
+def test_create_payment_link_accepts_an_incentive_amount(gateway: Gateway):
+    """ticket 19: the Gateway Protocol's additive `incentive_amount`
+    keyword -- every implementation accepts it, whether or not it acts on it."""
+    result = gateway.create_payment_link(
+        case_id="case-1",
+        amount=50000,
+        currency="INR",
+        description="Complete your payment",
+        customer_contact={},
+        incentive_amount=2_500,
+    )
+    assert isinstance(result, PaymentLinkResult)
+
+
+def test_resume_charge_accepts_an_incentive_amount(gateway: Gateway):
+    result = gateway.resume_charge(case_id="case-1", subscription_id="sub_123", incentive_amount=2_500)
+    assert isinstance(result, ResumeChargeResult)
+
+
 def test_parse_webhook_extracts_event_and_payload(gateway: Gateway):
     body = json.dumps({"event": "payment.failed", "payload": {"payment": {"entity": {"id": "pay_1"}}}}).encode()
 

@@ -8,9 +8,9 @@
       "recovered_count": 54
     },
     "fixed_rule": {
-      "total_nrr": 8340000,
+      "total_nrr": 9870000,
       "case_count": 300,
-      "recovered_count": 197
+      "recovered_count": 225
     },
     "offline_optimal": {
       "total_nrr": 11000000,
@@ -18,61 +18,61 @@
       "recovered_count": 220
     },
     "ai_treatment": {
-      "total_nrr": 9850000,
+      "total_nrr": 9650000,
       "case_count": 300,
-      "recovered_count": 197
+      "recovered_count": 208
     }
   },
   "baselines": [
     {
       "baseline_name": "no_intervention",
-      "incremental_nrr": 23833.333333333332,
-      "ci_lower": 21000.0,
-      "ci_upper": 26666.666666666668
+      "incremental_nrr": 23166.666666666668,
+      "ci_lower": 20333.333333333332,
+      "ci_upper": 26000.0
     },
     {
       "baseline_name": "fixed_rule",
-      "incremental_nrr": 5033.333333333333,
-      "ci_lower": 4783.333333333333,
-      "ci_upper": 5283.333333333333
+      "incremental_nrr": -733.3333333333334,
+      "ci_lower": -2116.6666666666665,
+      "ci_upper": 483.3333333333333
     }
   ],
-  "pct_of_offline_optimal": 0.8954545454545455,
+  "pct_of_offline_optimal": 0.8772727272727273,
   "calibration": [
     {
       "bucket_low": 0.5,
       "bucket_high": 0.6000000000000001,
-      "mean_predicted": 0.525,
-      "observed_rate": 0.125,
-      "count": 16
+      "mean_predicted": 0.5599999999999999,
+      "observed_rate": 0.2,
+      "count": 10
     },
     {
       "bucket_low": 0.6000000000000001,
       "bucket_high": 0.7000000000000001,
       "mean_predicted": 0.6666666666666666,
-      "observed_rate": 1.0,
-      "count": 1
+      "observed_rate": 0.25,
+      "count": 4
     },
     {
       "bucket_low": 0.7000000000000001,
       "bucket_high": 0.8,
-      "mean_predicted": 0.7390873015873016,
-      "observed_rate": 0.75,
-      "count": 4
+      "mean_predicted": 0.7473544973544973,
+      "observed_rate": 1.0,
+      "count": 3
     },
     {
       "bucket_low": 0.8,
       "bucket_high": 0.9,
-      "mean_predicted": 0.8604805530414171,
-      "observed_rate": 0.22727272727272727,
-      "count": 44
+      "mean_predicted": 0.8647702213551225,
+      "observed_rate": 0.2564102564102564,
+      "count": 39
     },
     {
       "bucket_low": 0.9,
       "bucket_high": 1.0,
-      "mean_predicted": 0.9720939690085065,
-      "observed_rate": 0.3358070500927644,
-      "count": 539
+      "mean_predicted": 0.9728116006081238,
+      "observed_rate": 0.3794466403162055,
+      "count": 506
     }
   ],
   "split": "dev"

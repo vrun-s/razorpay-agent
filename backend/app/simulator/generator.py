@@ -17,7 +17,7 @@ import random
 from dataclasses import dataclass
 
 from app.simulator.personas import Persona, sample_persona
-from app.simulator.response_curves import BASE_RESPONSE_CURVES, Intervention, decayed_probability
+from app.simulator.response_curves import BASE_RESPONSE_CURVES, Intervention, response_probability
 
 
 @dataclass(frozen=True)
@@ -74,12 +74,17 @@ def resolve_intervention(
     *,
     prior_attempts_of_this_intervention: int,
     rng: random.Random,
+    incentive_amount: int = 0,
 ) -> bool:
-    """Draw a Bernoulli recovery outcome for `intervention` on `case`, with fatigue decay applied.
+    """Draw a Bernoulli recovery outcome for `intervention` on `case`, with
+    fatigue decay and (ADR-0014) an Incentive uplift applied when this
+    execution actually carried one.
 
     The caller supplies `rng` so outcome draws are reproducible independently
     of population generation.
     """
     base_probability = case.hidden.outcome_odds[intervention]
-    probability = decayed_probability(base_probability, prior_attempts_of_this_intervention)
+    probability = response_probability(
+        base_probability, prior_attempts_of_this_intervention, incentive_amount=incentive_amount
+    )
     return rng.random() < probability

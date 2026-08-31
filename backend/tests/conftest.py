@@ -35,6 +35,28 @@ def client(session):
     app.dependency_overrides.clear()
 
 
+@pytest.fixture(autouse=True)
+def isolated_allocator(monkeypatch):
+    """Swaps the process-wide `StreamingAllocator` singleton
+    (app/allocator.py's `get_allocator()`) for a fresh one before every test.
+
+    Ticket 19/ADR-0014 gives a `PAYMENT_RETRY`/`RESUME_CHARGE` proposal a
+    real, non-zero `incentive_amount` for the first time -- before this, the
+    singleton's `spent` never moved regardless of how many tests ran through
+    it, so no test needed isolating from it. Autouse (unlike
+    `isolated_estimator` below, which some tests want to opt out of): there's
+    no test that wants another test's Incentive spend leaking into its own
+    budget math.
+    """
+    import app.allocator as allocator_module
+    from app.merchant_config import DEFAULT_MERCHANT_CONFIG
+
+    fresh = allocator_module.StreamingAllocator(
+        allocator_module.BudgetLedger(recovery_budget=DEFAULT_MERCHANT_CONFIG.recovery_budget, reserve_ratio=1 / 3)
+    )
+    monkeypatch.setattr(allocator_module, "_default_allocator", fresh)
+
+
 @pytest.fixture()
 def isolated_estimator(monkeypatch):
     """Swaps the process-wide `Estimator` singleton for a fresh one for the

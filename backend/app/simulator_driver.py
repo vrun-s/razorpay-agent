@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 
 from sqlmodel import Session
 
+from app.allocator import StreamingAllocator
 from app.intake import create_case_from_failed_payment, create_case_from_halted_subscription
 from app.lifecycle import mark_recovered, run_decision_cycle
 from app.models import CaseHistoryEntry, CaseHistoryEntryType, CaseStatus, Intervention, RecoveryCase, WorkflowType
@@ -117,19 +118,38 @@ def _resolve_cycle_outcome(gateway: SimulatorGateway, case: RecoveryCase, new_en
 
 
 def run_simulated_case(
-    session: Session, simulated: SimulatedCase, *, workflow_type: WorkflowType, rng: random.Random
+    session: Session,
+    simulated: SimulatedCase,
+    *,
+    workflow_type: WorkflowType,
+    rng: random.Random,
+    allocator: StreamingAllocator | None = None,
 ) -> SimulationOutcome:
     """Drives one synthetic case from creation through however many
-    reassessment cycles it takes to resolve (or the safety bound)."""
+    reassessment cycles it takes to resolve (or the safety bound).
+
+    `allocator` defaults to `run_decision_cycle`'s own default (the
+    process-wide singleton, correct for a live/demo run); ticket 19's
+    evaluation harness passes one fresh `StreamingAllocator` shared across a
+    whole arm's case stream instead (app/evaluation.py's `run_ai_treatment_arm`).
+    """
     gateway = SimulatorGateway(simulated.hidden, rng=rng)
 
     if workflow_type == WorkflowType.FAILED_PAYMENT:
         case = create_case_from_failed_payment(
-            session, gateway, _failed_payment_payload(simulated), event_id=f"evt_sim_create_{simulated.case_index}"
+            session,
+            gateway,
+            _failed_payment_payload(simulated),
+            event_id=f"evt_sim_create_{simulated.case_index}",
+            allocator=allocator,
         )
     else:
         case = create_case_from_halted_subscription(
-            session, gateway, _halted_subscription_payload(simulated), event_id=f"evt_sim_create_{simulated.case_index}"
+            session,
+            gateway,
+            _halted_subscription_payload(simulated),
+            event_id=f"evt_sim_create_{simulated.case_index}",
+            allocator=allocator,
         )
 
     seen = 0
@@ -156,7 +176,7 @@ def run_simulated_case(
             break
 
         cycle += 1
-        case = run_decision_cycle(session, gateway, case)
+        case = run_decision_cycle(session, gateway, case, allocator=allocator)
 
     return SimulationOutcome(
         case=case, recovered=case.status == CaseStatus.RECOVERED, resolved_decisions=resolved_decisions
@@ -164,11 +184,19 @@ def run_simulated_case(
 
 
 def run_simulated_population(
-    session: Session, population: list[SimulatedCase], *, workflow_type: WorkflowType, rng: random.Random
+    session: Session,
+    population: list[SimulatedCase],
+    *,
+    workflow_type: WorkflowType,
+    rng: random.Random,
+    allocator: StreamingAllocator | None = None,
 ) -> list[SimulationOutcome]:
     """Drives a whole population (ticket 02's `generate_population`) through
     the pipeline one case at a time, in order, sharing one `rng` across all
     of them -- same convention as `resolve_intervention`'s own caller-supplied
     rng: reproducible given a fixed seed, independent of population generation.
     """
-    return [run_simulated_case(session, simulated, workflow_type=workflow_type, rng=rng) for simulated in population]
+    return [
+        run_simulated_case(session, simulated, workflow_type=workflow_type, rng=rng, allocator=allocator)
+        for simulated in population
+    ]

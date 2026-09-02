@@ -20,7 +20,7 @@ function reasoningFor(recoveryCase: RecoveryCase): { justification?: string; esc
 
 const FIELD = 'rounded-md border border-border bg-surface px-2 py-1 text-sm text-ink'
 
-function EscalationCard({ recoveryCase }: { recoveryCase: RecoveryCase }) {
+function EscalationCard({ recoveryCase, readonly }: { recoveryCase: RecoveryCase; readonly: boolean }) {
   const queryClient = useQueryClient()
   const interventions = WORKFLOW_INTERVENTIONS[recoveryCase.workflow_type]
   const [intervention, setIntervention] = useState<Intervention>(interventions[0])
@@ -72,57 +72,64 @@ function EscalationCard({ recoveryCase }: { recoveryCase: RecoveryCase }) {
         </ul>
       </details>
 
-      <div className="mt-4 grid gap-3 sm:grid-cols-2">
-        <div className="rounded-md border border-border bg-surface p-3">
-          <p className="text-xs font-semibold text-muted">Override with an Intervention</p>
-          <div className="mt-2 flex gap-2">
-            <select className={`flex-1 ${FIELD}`} value={intervention} onChange={(e) => setIntervention(e.target.value as Intervention)}>
-              {interventions.map((option) => (
-                <option key={option} value={option}>
-                  {option}
-                </option>
-              ))}
-            </select>
-            <button
-              className="rounded-md bg-brand px-3 py-1 text-sm font-semibold text-white transition hover:bg-brand-strong disabled:opacity-50"
-              disabled={overrideMutation.isPending}
-              onClick={() => overrideMutation.mutate()}
-            >
-              Override
-            </button>
+      {readonly ? (
+        <p className="mt-4 rounded-md border border-border bg-surface p-3 text-xs text-muted">
+          Read-only demo — override and resolve are disabled here. The live human-in-the-loop
+          handoff is in the walkthrough video and on a local run.
+        </p>
+      ) : (
+        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          <div className="rounded-md border border-border bg-surface p-3">
+            <p className="text-xs font-semibold text-muted">Override with an Intervention</p>
+            <div className="mt-2 flex gap-2">
+              <select className={`flex-1 ${FIELD}`} value={intervention} onChange={(e) => setIntervention(e.target.value as Intervention)}>
+                {interventions.map((option) => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </select>
+              <button
+                className="rounded-md bg-brand px-3 py-1 text-sm font-semibold text-white transition hover:bg-brand-strong disabled:opacity-50"
+                disabled={overrideMutation.isPending}
+                onClick={() => overrideMutation.mutate()}
+              >
+                Override
+              </button>
+            </div>
+            {overrideMutation.isError && <p className="mt-1 text-xs text-bad">{String(overrideMutation.error)}</p>}
           </div>
-          {overrideMutation.isError && <p className="mt-1 text-xs text-bad">{String(overrideMutation.error)}</p>}
-        </div>
 
-        <div className="rounded-md border border-border bg-surface p-3">
-          <p className="text-xs font-semibold text-muted">Manually resolve</p>
-          <div className="mt-2 flex flex-wrap gap-2">
-            <select className={FIELD} value={resolution} onChange={(e) => setResolution(e.target.value as 'recovered' | 'stopped')}>
-              <option value="recovered">recovered</option>
-              <option value="stopped">stopped</option>
-            </select>
-            <input
-              className={`min-w-0 flex-1 ${FIELD}`}
-              placeholder="Reason"
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-            />
-            <button
-              className="rounded-md border border-border bg-surface-2 px-3 py-1 text-sm font-semibold text-ink transition hover:border-faint disabled:opacity-50"
-              disabled={resolveMutation.isPending || !reason.trim()}
-              onClick={() => resolveMutation.mutate()}
-            >
-              Resolve
-            </button>
+          <div className="rounded-md border border-border bg-surface p-3">
+            <p className="text-xs font-semibold text-muted">Manually resolve</p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <select className={FIELD} value={resolution} onChange={(e) => setResolution(e.target.value as 'recovered' | 'stopped')}>
+                <option value="recovered">recovered</option>
+                <option value="stopped">stopped</option>
+              </select>
+              <input
+                className={`min-w-0 flex-1 ${FIELD}`}
+                placeholder="Reason"
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+              />
+              <button
+                className="rounded-md border border-border bg-surface-2 px-3 py-1 text-sm font-semibold text-ink transition hover:border-faint disabled:opacity-50"
+                disabled={resolveMutation.isPending || !reason.trim()}
+                onClick={() => resolveMutation.mutate()}
+              >
+                Resolve
+              </button>
+            </div>
+            {resolveMutation.isError && <p className="mt-1 text-xs text-bad">{String(resolveMutation.error)}</p>}
           </div>
-          {resolveMutation.isError && <p className="mt-1 text-xs text-bad">{String(resolveMutation.error)}</p>}
         </div>
-      </div>
+      )}
     </div>
   )
 }
 
-export function EscalationQueue({ cases }: { cases: RecoveryCase[] }) {
+export function EscalationQueue({ cases, readonly = false }: { cases: RecoveryCase[]; readonly?: boolean }) {
   const escalated = cases.filter((c) => c.status === 'escalated')
 
   return (
@@ -131,7 +138,7 @@ export function EscalationQueue({ cases }: { cases: RecoveryCase[] }) {
 
       <div className="space-y-4">
         {escalated.map((recoveryCase) => (
-          <EscalationCard key={recoveryCase.id} recoveryCase={recoveryCase} />
+          <EscalationCard key={recoveryCase.id} recoveryCase={recoveryCase} readonly={readonly} />
         ))}
       </div>
     </section>

@@ -1,0 +1,38 @@
+# Keep the build context small and reproducible. The image rebuilds the
+# frontend and resolves the venv from lockfiles, so none of the local build
+# artifacts should be copied in.
+
+.git
+.gitignore
+.dockerignore
+Dockerfile
+
+# Secrets / local env
+.env
+.env.*
+!.env.example
+
+# Agent + editor scaffolding
+.agents
+.claude
+.scratch
+.pytest_cache
+skills-lock.json
+test2108.md
+test-scripts
+
+# Docs aren't needed at runtime
+docs
+
+# Python
+backend/.venv
+backend/**/__pycache__
+backend/**/*.pyc
+backend/*.db
+backend/.pytest_cache
+backend/tests
+
+# Node — rebuilt in the frontend stage
+frontend/node_modules
+frontend/dist
+frontend/.vite

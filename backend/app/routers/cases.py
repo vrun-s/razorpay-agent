@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select
 
+from app.config import settings
 from app.db import get_session
 from app.decision import VALID_INTERVENTIONS
 from app.gateway import Gateway, get_gateway
@@ -10,6 +11,14 @@ from app.models import CaseStatus, RecoveryCase
 from app.schemas import OverrideRequest, RecoveryCaseRead, ResolveRequest
 
 router = APIRouter(tags=["cases"])
+
+
+def require_writable() -> None:
+    """ADR-0015: the public hosted instance runs with DEMO_READONLY=true and
+    rejects the human-action endpoints. `/config` tells the SPA to hide the
+    controls; this is the enforcement behind them."""
+    if settings.demo_readonly:
+        raise HTTPException(status_code=403, detail="this instance is a read-only demo")
 
 
 @router.get("/cases", response_model=list[RecoveryCaseRead])
@@ -27,7 +36,7 @@ def _get_escalated_case(session: Session, case_id: str) -> RecoveryCase:
     return case
 
 
-@router.post("/cases/{case_id}/override", response_model=RecoveryCaseRead)
+@router.post("/cases/{case_id}/override", response_model=RecoveryCaseRead, dependencies=[Depends(require_writable)])
 def override(
     case_id: str,
     body: OverrideRequest,
@@ -46,7 +55,7 @@ def override(
     return override_case(session, gateway, case, intervention=body.intervention)
 
 
-@router.post("/cases/{case_id}/resolve", response_model=RecoveryCaseRead)
+@router.post("/cases/{case_id}/resolve", response_model=RecoveryCaseRead, dependencies=[Depends(require_writable)])
 def resolve(case_id: str, body: ResolveRequest, session: Session = Depends(get_session)) -> RecoveryCase:
     """Ticket 09: a human manually resolves/closes an Escalated case."""
     case = _get_escalated_case(session, case_id)

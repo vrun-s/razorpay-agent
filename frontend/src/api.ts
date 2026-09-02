@@ -1,4 +1,7 @@
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000'
+// Same-origin by default: the backend serves this bundle (ADR-0015 one-port
+// collapse), and `vite dev` proxies the API prefixes to :8000 (vite.config.ts).
+// Override with VITE_API_BASE_URL only for a split deployment.
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
 export type WorkflowType = 'failed_payment' | 'halted_subscription'
 export type CaseStatus = 'open' | 'recovered' | 'stopped' | 'escalated'
@@ -30,6 +33,20 @@ export interface RecoveryCase {
   source: EventSource
   created_at: string
   history: CaseHistoryEntry[]
+}
+
+export interface RuntimeConfig {
+  /** True on the public hosted instance: the write endpoints return 403 and
+   * their controls should be hidden (ADR-0015). */
+  demo_readonly: boolean
+}
+
+export async function fetchConfig(): Promise<RuntimeConfig> {
+  const response = await fetch(`${API_BASE_URL}/config`)
+  if (!response.ok) {
+    throw new Error(`Failed to fetch config: ${response.status}`)
+  }
+  return response.json()
 }
 
 export async function fetchCases(): Promise<RecoveryCase[]> {

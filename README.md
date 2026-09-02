@@ -6,10 +6,14 @@ merchant-approved intervention, watches the outcome, escalates when a human shou
 **stops when spending more is no longer justified**. It executes through real Razorpay test-mode
 APIs and measures the *incremental* net revenue it recovered against honest baselines.
 
-`Track 3 · AI Revenue Recovery`  ·  `Razorpay Buildathon 2026`  ·  `▶ 5-min pitch video: TODO — add unlisted link`
+`Track 3 · AI Revenue Recovery`  ·  `Razorpay Buildathon 2026`  ·  `▶ 5-min pitch video: TODO — add unlisted link`  ·  `🌐 Live demo: TODO — add Render URL`
+
+> The live demo is a **read-only replay** on the deterministic fake gateway (no keys,
+> re-seeded on every boot). The full agent loop — live reassessment and the human-in-the-loop
+> handoff — is in the video and on a local run ([ADR-0015](docs/adr/0015-hosted-demo-deployment.md)).
 
 > Solo build, ~15 days. The reasoning behind every non-obvious decision lives in
-> [`docs/adr/`](docs/adr/) (14 ADRs) and the domain vocabulary in [`CONTEXT.md`](CONTEXT.md).
+> [`docs/adr/`](docs/adr/) (15 ADRs) and the domain vocabulary in [`CONTEXT.md`](CONTEXT.md).
 > This README is the front door; those are the primary sources.
 
 ---
@@ -90,9 +94,26 @@ npm run dev                          # http://localhost:5173
 ```
 
 Open <http://localhost:5173>. Four tabs: **Case Timeline**, **Reserved Budget**, **Evaluation**,
-**Escalations**. Backend health check at <http://localhost:8000/health>.
+**Escalations**. Backend health check at <http://localhost:8000/health>. The dev server proxies
+the API prefixes to `:8000`, so the SPA calls same-origin paths and needs no `VITE_API_BASE_URL`
+([ADR-0015](docs/adr/0015-hosted-demo-deployment.md) one-port collapse).
 
 **Tests:** `cd backend && uv run pytest` (251 tests). **Frontend check:** `cd frontend && npm run build && npm run lint`.
+
+<details>
+<summary>Run it as one container (install nothing but Docker)</summary>
+
+```bash
+docker build -t recovery-demo .
+docker run --rm -p 8000:8000 recovery-demo
+```
+
+Open <http://localhost:8000> — one process serves the built SPA and the API. The image runs the
+fake gateway with no keys, re-seeds an ephemeral SQLite DB on start, disables the sweep, and runs
+read-only (`DEMO_READONLY=true`). This is the exact unit deployed to Render; override any of the
+`ENV` defaults in `Dockerfile` via `-e` or the platform dashboard. The `uv`/`npm` quickstart above
+stays the primary path — this is the "install nothing" fallback.
+</details>
 
 <details>
 <summary>Running against real Razorpay test mode</summary>
@@ -301,7 +322,7 @@ stress test; a judge-facing observability dashboard.
 | Path | What it is |
 |---|---|
 | [`CONTEXT.md`](CONTEXT.md) | Domain vocabulary — every term, with the wrong synonyms called out |
-| [`docs/adr/`](docs/adr/) | 14 architecture decision records — the *why* behind each choice |
+| [`docs/adr/`](docs/adr/) | 15 architecture decision records — the *why* behind each choice |
 | [`.scratch/recovery-engine/spec.md`](.scratch/recovery-engine/spec.md) | Problem statement, solution, all 53 user stories, cut order |
 | [`docs/research/`](docs/research/) | Razorpay-specific empirical research (retry ladder, `halted` testability) |
 | [`docs/agent-handoffs/`](docs/agent-handoffs/) | Chronological build narrative, session by session |

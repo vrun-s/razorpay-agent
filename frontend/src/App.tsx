@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { fetchCases } from './api'
+import { fetchCases, fetchConfig } from './api'
 import { EscalationQueue } from './EscalationQueue'
 import { CaseTimelineView } from './CaseTimeline'
 import { BudgetTimelineView } from './BudgetTimeline'
@@ -100,10 +100,12 @@ function EscalationsTab() {
     queryFn: fetchCases,
     refetchInterval: 3000,
   })
+  // Absent or failed config -> treat as writable (local dev default).
+  const { data: config } = useQuery({ queryKey: ['config'], queryFn: fetchConfig, staleTime: Infinity })
 
   if (isLoading) return <p className="text-muted">Loading cases…</p>
   if (isError) return <p className="text-bad">Failed to load cases: {String(error)}</p>
-  return <EscalationQueue cases={cases ?? []} />
+  return <EscalationQueue cases={cases ?? []} readonly={config?.demo_readonly ?? false} />
 }
 
 function App() {

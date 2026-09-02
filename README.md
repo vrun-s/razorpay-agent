@@ -6,7 +6,7 @@ merchant-approved intervention, watches the outcome, escalates when a human shou
 **stops when spending more is no longer justified**. It executes through real Razorpay test-mode
 APIs and measures the *incremental* net revenue it recovered against honest baselines.
 
-`Track 3 · AI Revenue Recovery`  ·  `Razorpay Buildathon 2026`  ·  `▶ 5-min pitch video: TODO — add unlisted link`  ·  `🌐 Live demo: TODO — add Render URL`
+`Track 3 · AI Revenue Recovery`  ·  `Razorpay Buildathon 2026`  ·  `▶ 5-min pitch video: TODO — add unlisted link`  ·  `🌐 Live demo: https://recovery-demo-nkxn.onrender.com`
 
 > The live demo is a **read-only replay** on the deterministic fake gateway (no keys,
 > re-seeded on every boot). The full agent loop — live reassessment and the human-in-the-loop

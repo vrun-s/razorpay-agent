@@ -86,9 +86,13 @@ class AllocationCandidate:
     """What the Streaming Allocator evaluates for one case, in arrival order."""
 
     case_id: str
-    point_estimate: float  # ticket 07 estimator's posterior mean
+    # SPIKE (P1 eval): point_estimate is None for estimator-blind arms
+    # (fixed_rule / no_intervention) -- both gates below are skipped for them,
+    # so the allocator stays structurally identical across arms (ADR-0013).
+    point_estimate: float | None  # ticket 07 estimator's posterior mean
     uncertainty: float  # ticket 07 estimator's credible interval width
     incentive_amount: int = 0  # cost of the proposed Intervention, paise
+    expected_net_value: float = 0.0  # SPIKE: p_hat * case_value - incentive_amount, carried for reporting
 
 
 @dataclass(frozen=True)
@@ -105,9 +109,16 @@ class StreamingAllocator:
     Intervention against a Recovery Budget with a withheld Reserved Budget.
     """
 
-    def __init__(self, ledger: BudgetLedger, *, min_quality_score: float = _DEFAULT_MIN_QUALITY_SCORE) -> None:
+    def __init__(
+        self,
+        ledger: BudgetLedger,
+        *,
+        min_quality_score: float = _DEFAULT_MIN_QUALITY_SCORE,
+        ev_margin: float = 0.05,  # SPIKE (P1 eval): incentive as a fraction of case value (incentive_pct / 100)
+    ) -> None:
         self.ledger = ledger
         self.min_quality_score = min_quality_score
+        self.ev_margin = ev_margin
 
     def decide(self, candidate: AllocationCandidate) -> AllocationDecision:
         ledger = self.ledger
@@ -115,7 +126,18 @@ class StreamingAllocator:
         if candidate.incentive_amount > ledger.remaining:
             return self._decision(funded=False, reason="exceeds the entire remaining recovery_budget")
 
+        # SPIKE (P1 eval): both gates apply iff the arm carries a real estimate.
+        gated = candidate.point_estimate is not None
+        quality = (candidate.point_estimate - candidate.uncertainty / 2) if gated else None
+
         if candidate.incentive_amount <= ledger.available:
+            # SPIKE: EV-margin gate on the non-reserved pool -- don't spend an
+            # incentive whose uncertainty-discounted odds don't even clear its
+            # own cost as a fraction of case value.
+            if gated and quality <= self.ev_margin:
+                return self._decision(
+                    funded=False, reason=f"EV margin {quality:.2f} <= incentive cost fraction {self.ev_margin}"
+                )
             ledger.record_spend(candidate.incentive_amount)
             return self._decision(funded=True, reason="funded from available (non-reserved) budget")
 
@@ -123,7 +145,12 @@ class StreamingAllocator:
         # enough (conservatively) may do that; uncertainty discounts the
         # point estimate per ADR-0006's rationale (a shaky, sparse cell reads
         # as riskier without a separate exploration algorithm).
-        quality = candidate.point_estimate - candidate.uncertainty / 2
+        if not gated:
+            # SPIKE: estimator-blind arms keep pre-spike treatment (0.5/0.0 fed
+            # to the old reserve gate always cleared 0.5 >= 0.5).
+            ledger.record_spend(candidate.incentive_amount)
+            return self._decision(funded=True, reason="estimator-blind arm -- reserve gate not applied")
+
         if quality >= self.min_quality_score:
             ledger.record_spend(candidate.incentive_amount)
             return self._decision(funded=True, reason=f"quality {quality:.2f} clears the reserve bar {self.min_quality_score}")

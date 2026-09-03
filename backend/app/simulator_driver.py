@@ -24,6 +24,7 @@ from app.allocator import StreamingAllocator
 from app.intake import create_case_from_failed_payment, create_case_from_halted_subscription
 from app.lifecycle import mark_recovered, run_decision_cycle
 from app.models import CaseHistoryEntry, CaseHistoryEntryType, CaseStatus, Intervention, RecoveryCase, WorkflowType
+from app.policy import PolicyConfig  # SPIKE (P1 eval): swept recovery_budget threaded through
 from app.simulator.generator import SimulatedCase
 from app.simulator_gateway import SimulatorGateway
 
@@ -63,13 +64,15 @@ class SimulationOutcome:
 def _failed_payment_payload(simulated: SimulatedCase) -> dict:
     return {
         "id": f"pay_sim_{simulated.case_index}",
-        "amount": DEFAULT_CASE_AMOUNT,
+        # SPIKE (P1 eval): per-case value + decline text instead of the two
+        # frozen constants, so the AI arm sees real per-case economics.
+        "amount": simulated.case_value,
         "currency": "INR",
         "order_id": f"order_sim_{simulated.case_index}",
         "email": "customer@example.com",
         "contact": "+911234567890",
         "error_code": "BAD_REQUEST_ERROR",
-        "error_description": "insufficient funds in account",
+        "error_description": simulated.decline_text,
     }
 
 
@@ -124,6 +127,7 @@ def run_simulated_case(
     workflow_type: WorkflowType,
     rng: random.Random,
     allocator: StreamingAllocator | None = None,
+    policy: PolicyConfig | None = None,  # SPIKE (P1 eval): swept recovery_budget
 ) -> SimulationOutcome:
     """Drives one synthetic case from creation through however many
     reassessment cycles it takes to resolve (or the safety bound).
@@ -142,6 +146,7 @@ def run_simulated_case(
             _failed_payment_payload(simulated),
             event_id=f"evt_sim_create_{simulated.case_index}",
             allocator=allocator,
+            policy=policy,
         )
     else:
         case = create_case_from_halted_subscription(
@@ -176,7 +181,7 @@ def run_simulated_case(
             break
 
         cycle += 1
-        case = run_decision_cycle(session, gateway, case, allocator=allocator)
+        case = run_decision_cycle(session, gateway, case, allocator=allocator, policy=policy)
 
     return SimulationOutcome(
         case=case, recovered=case.status == CaseStatus.RECOVERED, resolved_decisions=resolved_decisions

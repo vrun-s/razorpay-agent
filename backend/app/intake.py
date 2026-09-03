@@ -11,6 +11,7 @@ from app.allocator import StreamingAllocator
 from app.gateway import Gateway
 from app.lifecycle import log_entry, run_decision_cycle
 from app.models import CaseHistoryEntryType, EventSource, ProcessedWebhookEvent, RecoveryCase, WorkflowType
+from app.policy import PolicyConfig  # SPIKE (P1 eval): swept recovery_budget threaded through
 
 
 def create_case_from_failed_payment(
@@ -21,6 +22,7 @@ def create_case_from_failed_payment(
     *,
     source: EventSource = EventSource.SIMULATED,
     allocator: StreamingAllocator | None = None,
+    policy: PolicyConfig | None = None,  # SPIKE (P1 eval)
 ) -> RecoveryCase:
     """`source` defaults to SIMULATED (every existing caller's behavior,
     unchanged); ticket 17's real-Razorpay integration slice is the first
@@ -52,7 +54,7 @@ def create_case_from_failed_payment(
     session.commit()
     session.refresh(case)
 
-    return run_decision_cycle(session, gateway, case, payment=payment, allocator=allocator)
+    return run_decision_cycle(session, gateway, case, payment=payment, allocator=allocator, policy=policy)
 
 
 def create_case_from_halted_subscription(

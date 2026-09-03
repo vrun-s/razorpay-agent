@@ -47,7 +47,7 @@ from __future__ import annotations
 import argparse
 import json
 import random
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -188,15 +188,16 @@ def run_no_intervention_arm(
     """
     results = []
     for simulated in cases:
+        cv = simulated.case_value  # SPIKE (P1 eval): per-case value
         case = RecoveryCase(workflow_type=workflow_type, source=EventSource.SIMULATED)
-        policy_result = validate(case, ProposedIntervention(intervention=Intervention.NO_ACTION), policy, case_value=case_value)
+        policy_result = validate(case, ProposedIntervention(intervention=Intervention.NO_ACTION), policy, case_value=cv)
         allocator = StreamingAllocator(BudgetLedger(recovery_budget=policy.recovery_budget, reserve_ratio=1 / 3))
         allocation = allocator.decide(
-            AllocationCandidate(case_id=case.id, point_estimate=_NEUTRAL_QUALITY_SCORE, uncertainty=0.0, incentive_amount=0)
+            AllocationCandidate(case_id=case.id, point_estimate=None, uncertainty=0.0, incentive_amount=0)
         )
         gateway = SimulatorGateway(simulated.hidden, rng=random.Random(_case_seed(run_seed, simulated.case_index)))
         recovered = policy_result.approved and allocation.funded and gateway.resolve(Intervention.NO_ACTION)
-        gross = case_value if recovered else 0
+        gross = cv if recovered else 0
         results.append(
             CaseResult(
                 case_index=simulated.case_index,
@@ -236,38 +237,51 @@ def run_fixed_rule_arm(
     estimate.
     """
     intervention = _workflow_intervention(workflow_type)
-    incentive_amount = round(case_value * FIXED_RULE_DISCOUNT_PCT / 100)
     results = []
+    # SPIKE (P1 eval): one shared allocator across the arm's case stream (like
+    # the AI arm) so the swept budget actually binds arm-wide, not per-case.
+    allocator = StreamingAllocator(BudgetLedger(recovery_budget=policy.recovery_budget, reserve_ratio=1 / 3))
     for simulated in cases:
+        cv = simulated.case_value  # SPIKE: per-case value + incentive
+        incentive_amount = round(cv * FIXED_RULE_DISCOUNT_PCT / 100)
         case = RecoveryCase(workflow_type=workflow_type, source=EventSource.SIMULATED)
         gateway = SimulatorGateway(simulated.hidden, rng=random.Random(_case_seed(run_seed, simulated.case_index)))
-        allocator = StreamingAllocator(BudgetLedger(recovery_budget=policy.recovery_budget, reserve_ratio=1 / 3))
 
         recovered = False
         total_cost = 0
         for _cycle in range(_MAX_ARM_CYCLES):
-            proposal = ProposedIntervention(
-                intervention=intervention, discount_pct=FIXED_RULE_DISCOUNT_PCT, incentive_amount=incentive_amount
+            # SPIKE (P1 eval): mirror the AI arm exactly -- the incentive is
+            # only ever proposed on the first cycle (the AI arm's reassessment
+            # cycles carry no payment payload, so case_value -> 0 -> incentive
+            # -> 0); later cycles are free retries. If the costed proposal is
+            # rejected purely on recovery_budget, degrade to a free retry (an
+            # unfunded incentive never skips the base attempt). Only a
+            # sequence-bound rejection stops the case.
+            cycle_incentive = incentive_amount if _cycle == 0 else 0
+            costed = ProposedIntervention(
+                intervention=intervention,
+                discount_pct=FIXED_RULE_DISCOUNT_PCT if cycle_incentive else 0.0,
+                incentive_amount=cycle_incentive,
             )
-            policy_result = validate(
-                case, proposal, policy, budget_spent_so_far=allocator.ledger.spent, case_value=case_value
-            )
+            policy_result = validate(case, costed, policy, budget_spent_so_far=allocator.ledger.spent, case_value=cv)
+            if not policy_result.approved and policy_result.violated_constraint == "recovery_budget":
+                cycle_incentive = 0
+                free = ProposedIntervention(intervention=intervention, discount_pct=0.0, incentive_amount=0)
+                policy_result = validate(case, free, policy, budget_spent_so_far=allocator.ledger.spent, case_value=cv)
             if not policy_result.approved:
                 break
 
-            allocation = allocator.decide(
-                AllocationCandidate(
-                    case_id=case.id,
-                    point_estimate=_NEUTRAL_QUALITY_SCORE,
-                    uncertainty=0.0,
-                    incentive_amount=incentive_amount,
+            funded_incentive = 0
+            if cycle_incentive > 0:
+                allocation = allocator.decide(
+                    AllocationCandidate(
+                        case_id=case.id, point_estimate=None, uncertainty=0.0, incentive_amount=cycle_incentive
+                    )
                 )
-            )
-            if not allocation.funded:
-                break
+                funded_incentive = cycle_incentive if allocation.funded else 0
 
-            outcome = gateway.resolve(intervention, incentive_amount=incentive_amount)
-            total_cost += incentive_amount
+            outcome = gateway.resolve(intervention, incentive_amount=funded_incentive)
+            total_cost += funded_incentive
             case.history.append(
                 CaseHistoryEntry(
                     case_id=case.id,
@@ -280,7 +294,7 @@ def run_fixed_rule_arm(
                 recovered = True
                 break
 
-        gross = case_value if recovered else 0
+        gross = cv if recovered else 0  # SPIKE: per-case value, not the scalar default
         results.append(
             CaseResult(
                 case_index=simulated.case_index,
@@ -297,17 +311,25 @@ def run_fixed_rule_arm(
 
 
 def _recovers_within_attempt_budget(
-    simulated: SimulatedCase, intervention: Intervention, seed: int, max_attempts: int
+    simulated: SimulatedCase, intervention: Intervention, seed: int, max_attempts: int, *, first_incentive: int = 0
 ) -> bool:
     """Whether committing to `intervention` and retrying it (with fatigue
     decay, like any other repeated attempt on this case) up to `max_attempts`
-    times would recover this case -- one candidate's fully-exhausted branch
-    of the retrospective search below. A fresh `SimulatorGateway` per
-    candidate so different candidates' attempt sequences don't consume each
-    other's draws; each starts from the *same* per-case seed as every other
-    arm's first attempt at this intervention (ADR-0013 pairing)."""
+    times would recover this case. SPIKE (P1 eval): `first_incentive` applies
+    the ADR-0014 uplift to the first attempt only -- exactly what the online
+    arms get when they fund the incentive on cycle 1."""
     gateway = SimulatorGateway(simulated.hidden, rng=random.Random(seed))
-    return any(gateway.resolve(intervention) for _ in range(max_attempts))
+    return any(
+        gateway.resolve(intervention, incentive_amount=first_incentive if attempt == 0 else 0)
+        for attempt in range(max_attempts)
+    )
+
+
+# SPIKE (P1 eval): the four non-cheating constraints (Q9) -- same swept budget
+# (no reserve), pays the incentive per funded case, same bounded retry ceiling
+# as the online arms, same valid-intervention set. Greedy 0/1 selection,
+# labelled a heuristic upper bound (not a true knapsack solve).
+_OFFLINE_RETRY_CEILING = 3  # == DEFAULT_POLICY_CONFIG.max_payment_retries
 
 
 def run_offline_optimal_arm(
@@ -316,59 +338,54 @@ def run_offline_optimal_arm(
     workflow_type: WorkflowType,
     case_value: int,
     run_seed: int,
-    max_attempts: int = _MAX_ARM_CYCLES,
+    recovery_budget: int,
+    max_attempts: int = _OFFLINE_RETRY_CEILING,
 ) -> ArmResult:
-    """CONTEXT.md: "a retrospective, batch-computed allocation over a case
-    set already fully observed... never presented as a decision the agent
-    itself made." For each case, evaluates every intervention valid for the
-    workflow with full foresight and keeps whichever recovers.
+    """SPIKE (P1 eval) rewrite: a *budget-constrained* retrospective upper
+    bound, replacing the old cost-0 / unbounded-attempts version.
 
-    Every candidate gets a full, guaranteed `max_attempts` real draws,
-    unconstrained by the Policy Engine's sequence-bound constraints
-    (max_payment_retries etc.) that cap `fixed_rule`/`ai_treatment`'s actual
-    attempt counts below that same ceiling, and uncomplicated by
-    `ai_treatment`'s own uncertainty-driven cycles that don't land on the
-    winning intervention at all. That's deliberate, not an oversight: an
-    offline arm bound by the same practical guardrails a deployed policy
-    needs wouldn't be an upper bound on what's *achievable* with foresight,
-    just a replay of one arm's realized path -- CONTEXT.md's "best possible
-    outcome" framing is exactly the ceiling this is meant to represent, not
-    a strategy any online arm could literally execute. Every candidate's
-    attempts replay the same per-case seed's draw sequence the other arms
-    would see if they'd chosen that same intervention (ADR-0013 pairing).
-
-    This arm's own candidates still cost 0, deliberately, unlike
-    `fixed_rule`/`ai_treatment` since ticket 19/ADR-0014: it has no Policy
-    Engine or Streaming Allocator in the loop at all (see this function's
-    first paragraph), so there is no budget to spend against -- it degenerates
-    to "recover for free whenever any candidate can, within the attempt
-    budget" with no budget tradeoff to solve. A future ticket that wants this
-    arm to also account for Incentive cost would need it to become a genuine
-    budget-constrained knapsack over cases instead -- out of this ticket's
-    scope, same as the rest of this arm's "no practical guardrails" design.
+    Per case, with full foresight, decide the best affordable option:
+      - if NO_ACTION recovers it organically -> take it, free.
+      - else if the workflow's cost-bearing intervention recovers it within
+        `_OFFLINE_RETRY_CEILING` attempts (with the ADR-0014 incentive uplift)
+        -> it's a *funding candidate* worth `case_value - incentive`, costing
+        `incentive = round(case_value * FIXED_RULE_DISCOUNT_PCT / 100)`.
+    Then greedily fund candidates, highest NRR first, until the swept
+    `recovery_budget` is exhausted. Labelled a heuristic upper bound: greedy
+    0/1, not an exact knapsack; NRR-per-incentive-rupee is constant under the
+    flat incentive so raw NRR is the tie-break that gives foresight its edge.
     """
-    candidates = VALID_INTERVENTIONS[workflow_type]
-    results = []
+    cost_bearing = _workflow_intervention(workflow_type)
+    free_nrr = 0
+    funding_candidates: list[tuple[int, int, int]] = []  # (nrr_if_funded, incentive, case_index)
+    per_case: dict[int, CaseResult] = {}
+
     for simulated in cases:
         seed = _case_seed(run_seed, simulated.case_index)
-        recovering = [
-            candidate
-            for candidate in candidates
-            if _recovers_within_attempt_budget(simulated, candidate, seed, max_attempts)
-        ]
-        recovered = bool(recovering)
-        chosen = recovering[0] if recovering else None
-        gross = case_value if recovered else 0
-        results.append(
-            CaseResult(
-                case_index=simulated.case_index,
-                intervention=chosen,
-                recovered=recovered,
-                gross_recovered=gross,
-                incentive_cost=0,
+        cv = simulated.case_value
+        incentive = round(cv * FIXED_RULE_DISCOUNT_PCT / 100)
+
+        if _recovers_within_attempt_budget(simulated, Intervention.NO_ACTION, seed, max_attempts):
+            free_nrr += cv
+            per_case[simulated.case_index] = CaseResult(
+                simulated.case_index, Intervention.NO_ACTION, True, cv, 0
             )
-        )
-    return ArmResult(name="offline_optimal", case_results=results)
+        elif _recovers_within_attempt_budget(
+            simulated, cost_bearing, seed, max_attempts, first_incentive=incentive
+        ):
+            funding_candidates.append((cv - incentive, incentive, simulated.case_index))
+            per_case[simulated.case_index] = CaseResult(simulated.case_index, cost_bearing, False, 0, 0)
+        else:
+            per_case[simulated.case_index] = CaseResult(simulated.case_index, None, False, 0, 0)
+
+    spent = 0
+    for nrr_if_funded, incentive, case_index in sorted(funding_candidates, reverse=True):
+        if spent + incentive > recovery_budget:
+            continue
+        spent += incentive
+        per_case[case_index] = CaseResult(case_index, cost_bearing, True, nrr_if_funded + incentive, incentive)
+
+    return ArmResult(name="offline_optimal", case_results=[per_case[s.case_index] for s in cases])
 
 
 # -- AI treatment arm ---------------------------------------------------------
@@ -379,7 +396,12 @@ def _ephemeral_engine():
 
 
 def run_ai_treatment_arm(
-    cases: list[SimulatedCase], *, workflow_type: WorkflowType, case_value: int, run_seed: int
+    cases: list[SimulatedCase],
+    *,
+    workflow_type: WorkflowType,
+    case_value: int,
+    run_seed: int,
+    policy: PolicyConfig = DEFAULT_POLICY_CONFIG,  # SPIKE (P1 eval): swept recovery_budget
 ) -> ArmResult:
     """The real system, unmodified: `app/simulator_driver.py`'s
     `run_simulated_case`, driving `app/intake.py` + `app/lifecycle.py`
@@ -405,8 +427,9 @@ def run_ai_treatment_arm(
     reset_estimator()
     engine = _ephemeral_engine()
     SQLModel.metadata.create_all(engine)
+    # SPIKE (P1 eval): ledger + policy both carry the swept recovery_budget.
     allocator = StreamingAllocator(
-        BudgetLedger(recovery_budget=DEFAULT_MERCHANT_CONFIG.recovery_budget, reserve_ratio=1 / 3)
+        BudgetLedger(recovery_budget=policy.recovery_budget, reserve_ratio=1 / 3)
     )
 
     results = []
@@ -419,10 +442,11 @@ def run_ai_treatment_arm(
                 workflow_type=workflow_type,
                 rng=random.Random(_case_seed(run_seed, simulated.case_index)),
                 allocator=allocator,
+                policy=policy,
             )
             resolved_decisions.extend(outcome.resolved_decisions)
             incentive_cost = _total_incentive_cost(outcome.case)
-            gross = case_value if outcome.recovered else 0
+            gross = simulated.case_value if outcome.recovered else 0  # SPIKE: per-case value
             chosen = _last_decided_intervention(outcome.case)
             results.append(
                 CaseResult(
@@ -582,6 +606,7 @@ def run_evaluation(
     workflow_type: WorkflowType = WorkflowType.FAILED_PAYMENT,
     case_value: int = DEFAULT_CASE_AMOUNT,
     policy: PolicyConfig = DEFAULT_POLICY_CONFIG,
+    recovery_budget: int | None = None,  # SPIKE (P1 eval): overrides policy.recovery_budget for the budget sweep
     n_bootstrap_resamples: int = 10_000,
 ) -> EvaluationReport:
     """Runs all four arms over the same case stream (ADR-0013's paired
@@ -601,14 +626,23 @@ def run_evaluation(
     comparison meaningless for that workflow until that gap closes. The
     parameter is still exposed (not hardcoded) for when it does.
     """
-    no_intervention = run_no_intervention_arm(cases, workflow_type=workflow_type, case_value=case_value, run_seed=run_seed)
+    # SPIKE (P1 eval): one swept budget shared across every arm.
+    if recovery_budget is not None:
+        policy = replace(policy, recovery_budget=recovery_budget)
+    budget = policy.recovery_budget
+
+    no_intervention = run_no_intervention_arm(
+        cases, workflow_type=workflow_type, case_value=case_value, run_seed=run_seed, policy=policy
+    )
     fixed_rule = run_fixed_rule_arm(
         cases, workflow_type=workflow_type, case_value=case_value, run_seed=run_seed, policy=policy
     )
     offline_optimal = run_offline_optimal_arm(
-        cases, workflow_type=workflow_type, case_value=case_value, run_seed=run_seed
+        cases, workflow_type=workflow_type, case_value=case_value, run_seed=run_seed, recovery_budget=budget
     )
-    ai_treatment = run_ai_treatment_arm(cases, workflow_type=workflow_type, case_value=case_value, run_seed=run_seed)
+    ai_treatment = run_ai_treatment_arm(
+        cases, workflow_type=workflow_type, case_value=case_value, run_seed=run_seed, policy=policy
+    )
 
     bootstrap_rng = random.Random(_case_seed(run_seed, -1))  # -1: never a valid case_index, so no collision
     bootstrap_results = [

@@ -159,11 +159,13 @@ def run_decision_cycle(
     merchant_config = merchant_config or DEFAULT_MERCHANT_CONFIG
 
     failure_reason = _failure_reason_for_case(case, payment, llm_client)
+    case_value = payment.get("amount", 0)  # SPIKE (P1 eval): moved up so decide() can maximise EV
     decision_input = DecisionInput(
         case=case,
         customer_history=_customer_history_from_payment(payment),
         failure_reason=failure_reason,
         qualitative_signal=qualitative_signal,
+        case_value=case_value,
     )
     decision_output = decide(decision_input, llm_client=llm_client)
     intervention = decision_output.intervention
@@ -184,7 +186,6 @@ def run_decision_cycle(
         },
     )
 
-    case_value = payment.get("amount", 0)
     incentive_amount = _incentive_amount_for(intervention, case_value, merchant_config)
     # The Incentive is a discount bundled with the proposal (ADR-0014), so
     # `discount_pct` and `incentive_amount` move together -- 0 for NO_ACTION
@@ -242,6 +243,7 @@ def run_decision_cycle(
                 point_estimate=decision_output.point_estimate,
                 uncertainty=decision_output.uncertainty,
                 incentive_amount=incentive_amount,
+                expected_net_value=decision_output.point_estimate * case_value - incentive_amount,  # SPIKE (P1 eval)
             )
         )
         log_entry(

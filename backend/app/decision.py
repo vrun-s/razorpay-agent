@@ -24,6 +24,12 @@ from app.models import CaseHistoryEntryType, Intervention, RecoveryCase, Workflo
 
 _UNKNOWN_FAILURE_REASON = "unknown"
 
+# SPIKE (P1 eval): decide() maximises expected value instead of raw
+# point_estimate. Under ADR-0014's flat incentive this is near-cosmetic
+# (case_value cancels -> reduces to p_retry - INCENTIVE_FRACTION > p_noaction),
+# a deliberately-accepted finding (Q13), kept in so the spike measures it.
+_INCENTIVE_FRACTION = 0.05  # mirrors DEFAULT_MERCHANT_CONFIG.incentive_pct / 100
+
 # Which Intervention values a workflow may propose (CONTEXT.md: Intervention;
 # ADR-0009 documents this mapping). Order matters: it's decide()'s tie-break
 # order at cold start, when every cell in a workflow starts at the same
@@ -40,6 +46,7 @@ class DecisionInput:
     customer_history: CustomerHistory
     failure_reason: str | None = None  # LLM-diagnosed (ticket 08); failed_payment workflow only
     qualitative_signal: str | None = None  # LLM escalation-flag input (ADR-0011); no real source wired yet
+    case_value: int = 0  # SPIKE (P1 eval): per-case value for EV-maximising decide()
 
 
 @dataclass(frozen=True)
@@ -90,9 +97,19 @@ def decide(input: DecisionInput, *, llm_client: LLMClient | None = None) -> Deci
     llm_client = llm_client or get_llm_client()
     estimator = get_estimator()
     candidates = VALID_INTERVENTIONS[input.case.workflow_type]
-    best_intervention = max(
-        candidates, key=lambda intervention: estimator.estimate(resolve_cell_key(input, intervention)).point_estimate
-    )
+
+    def _expected_value(intervention: Intervention) -> float:
+        # SPIKE (P1 eval): EV = p_hat * value - incentive_cost. NO_ACTION
+        # carries no incentive; the workflow's cost-bearing intervention does.
+        # value <= 0 (e.g. HALTED_SUBSCRIPTION) -> degenerates to point_estimate
+        # ranking, preserving pre-spike behaviour for that path.
+        p_hat = estimator.estimate(resolve_cell_key(input, intervention)).point_estimate
+        if input.case_value <= 0:
+            return p_hat
+        incentive = 0.0 if intervention == Intervention.NO_ACTION else _INCENTIVE_FRACTION * input.case_value
+        return p_hat * input.case_value - incentive
+
+    best_intervention = max(candidates, key=_expected_value)
     # point_estimate/uncertainty are fixed here, before any LLM call below --
     # nothing from this point on can feed back into them.
     estimate = estimator.estimate(resolve_cell_key(input, best_intervention))

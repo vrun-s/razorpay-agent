@@ -127,9 +127,11 @@ stays the primary path — this is the "install nothing" fallback.
    deliberately small (~20–25 case) integration proof, not where the evaluation numbers come from
    ([ADR-0007](docs/adr/0007-evaluation-integrity.md)).
 
-Note: driving a test-mode subscription to `halted` on demand is **not reliably reproducible** —
-see [What broke](#what-broke-and-how-we-got-out) below. The subscription workflow is exercised
-through synthetic `subscription.halted` events.
+Note: driving a test-mode subscription to `halted` on demand ("Charge this now → Failure" ×4) is
+reproducible but was historically finicky — see [What broke](#what-broke-and-how-we-got-out)
+below. The shipped build exercises the subscription workflow through synthetic
+`subscription.halted` events; a real-Razorpay halted slice is viable but not yet run end-to-end
+(webhook delivery unconfirmed).
 </details>
 
 ---
@@ -299,17 +301,20 @@ findings 1 and 2 are why.
 
 ## What broke, and how we got out
 
-**The halted-subscription workflow rested on an assumption that didn't hold.** Razorpay's docs
-describe a test-mode "Charge this now → Failure" button that, clicked four times, drives a
-subscription to `halted` without waiting real days. Hands-on against a live test dashboard, it
-**did not reproduce** — subscriptions stayed `active`, and some invoices later showed `Paid`
-despite `Failure` being selected every time (two subscriptions, immediate and reload-spaced
-clicks, both invoice- and subscription-level checks). Rather than burn a 15-day budget on
-trial-and-error against someone else's dashboard, we wrote up the empirical finding
+**The halted-subscription workflow rested on an assumption that didn't hold — at first.**
+Razorpay's docs describe a test-mode "Charge this now → Failure" button that, clicked four times,
+drives a subscription to `halted` without waiting real days. Hands-on against a live test
+dashboard on 2026-08-22 it **did not reproduce** — subscriptions stayed `active`, and some
+invoices later showed `Paid` despite `Failure` being selected every time (two subscriptions,
+immediate and reload-spaced clicks, both invoice- and subscription-level checks). Rather than
+burn a 15-day budget on trial-and-error against someone else's dashboard, we wrote up the
+empirical finding
 ([`docs/research/razorpay-test-mode-subscription-halting.md`](docs/research/razorpay-test-mode-subscription-halting.md))
 and drove the workflow with **synthetic `subscription.halted` events** through the same verified
-ingestion path instead. The workflow ships; its real-Razorpay `halted` trigger is documented as
-unproven.
+ingestion path instead. A later attempt (2026-09-03) *did* reproduce the `active → halted`
+transition on the fourth failure, so the synthetic-event path is now a convenience rather than a
+necessity — though real `subscription.halted` **webhook delivery** still needs one clean
+end-to-end confirmation. The workflow ships either way.
 
 **The evaluation could have been circular.** The simulator defines ground-truth recovery
 probability; the estimator estimates that same quantity. If the estimator were built with

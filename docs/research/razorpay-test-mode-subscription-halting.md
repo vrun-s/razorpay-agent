@@ -66,6 +66,28 @@ Hands-on testing in a live Razorpay test-mode dashboard did **not** match the "C
 - Conclusion: as observed, the documented "fail 4 times → `halted`" Dashboard mechanism is **not reliably reproducible** in practice. Either the current live dashboard behavior has diverged from the docs, the mechanism requires an undocumented precondition/sequence not captured above, or it is simply unreliable. Given the effort already invested (two subscriptions, immediate and reload-spaced clicks, both invoice- and subscription-level status checked), further trial-and-error against the live dashboard is not a good use of a 15-day solo build's time.
 - This does not contradict the earlier documented-answer sections above — those remain an accurate summary of what Razorpay's docs *say* — but it means ADR-0001's halted-subscription workflow **cannot currently be assumed testable on-demand via this route**, and the fallback options noted in `.scratch/pre-architecture-readiness/spec.md` (inject synthetic `subscription.halted` events, or demote the workflow to a stretch goal) should be considered live options, not just a theoretical contingency.
 
+## Addendum 2 (2026-09-03) — the documented mechanism *did* reproduce
+
+A second hands-on attempt succeeded where the 2026-08-22 one did not, matching the docs.
+
+- Same subscriptions-specific test card (`4718 6091 0820 4366`).
+- Three consecutive **Charge this now → Failure** clicks left the subscription `active`; the
+  **fourth** Failure transitioned it **`active` → `halted`** directly (no `pending` badge
+  observed in between). This is exactly the documented "fail 4 times in a row → `halted`"
+  behaviour. ([Test Subscriptions](https://razorpay.com/docs/payments/subscriptions/test/))
+- **Not verified this run:** whether a `subscription.halted` **webhook was actually delivered**
+  to a registered endpoint. Only the Dashboard status transition was observed. The end-to-end
+  path we actually depend on (Razorpay fires `subscription.halted` → `/webhooks/subscription-halted`
+  → case created) is still unconfirmed against real Razorpay.
+- What differed from the 2026-08-22 failure is not established (transient Dashboard issue then,
+  or a click sequencing/timing difference). Treat the mechanism as **reproducible but historically
+  finicky**: the `halted` *state* is reachable on demand in test mode; one clean confirmation of
+  real `subscription.halted` *webhook delivery* is still owed before the workflow's real trigger
+  can be called proven.
+- Net: the "inject synthetic `subscription.halted` events" fallback is still what the shipped
+  build uses, but it is now a *convenience*, not a *necessity* — a real-Razorpay halted slice is
+  viable. See `.scratch/recovery-engine/issues/20-real-razorpay-halted-subscription-slice.md`.
+
 ## Sources
 
 Primary (Razorpay official docs), consulted directly via WebFetch or confirmed via search-engine indexing of the page:

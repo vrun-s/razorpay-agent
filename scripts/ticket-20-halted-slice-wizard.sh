@@ -216,11 +216,12 @@ write_env RAZORPAY_WEBHOOK_SECRET "$RAZORPAY_WEBHOOK_SECRET"
 
 # ── Stage 3 ──────────────────────────────────────────────────────────────
 stage "Start the backend (real gateway)"
-say "In a SEPARATE terminal, from the repo root:"
-note "  cd backend && uv run uvicorn app.main:app --port 8000"
-say "It reads the .env this wizard just wrote (GATEWAY_BACKEND=razorpay + keys)."
-say "Optional: also set SWEEP_ENABLED=false in .env so a halted case sits OPEN"
-say "for inspection instead of being reassessed by the background sweep."
+say "In a SEPARATE terminal, from backend/, on a DEDICATED db so this slice's"
+say "one case is unambiguous (recovery.db already holds dev/demo cases):"
+note "  cd backend"
+note "  DATABASE_URL='sqlite:///./ticket20.db' SWEEP_ENABLED=false uv run uvicorn app.main:app --port 8000"
+say "GATEWAY_BACKEND=razorpay + the keys come from the .env this wizard wrote."
+say "SWEEP_ENABLED=false keeps the halted case OPEN for inspection."
 pause "Press Enter once 'curl -s localhost:8000/cases' returns []."
 
 # ── Stage 4 ──────────────────────────────────────────────────────────────

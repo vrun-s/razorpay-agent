@@ -21,6 +21,8 @@ from dataclasses import dataclass, field
 from sqlmodel import Session
 
 from app.allocator import StreamingAllocator
+from app.decision import resolve_last_decided_cell_key
+from app.estimator import get_estimator
 from app.intake import create_case_from_failed_payment, create_case_from_halted_subscription
 from app.lifecycle import mark_recovered, run_decision_cycle
 from app.models import CaseHistoryEntry, CaseHistoryEntryType, CaseStatus, Intervention, RecoveryCase, WorkflowType
@@ -171,6 +173,21 @@ def run_simulated_case(
                 reason="synthetic outcome resolved recovered",
             )
             break
+
+        if outcome.resolved and not outcome.recovered:
+            # A resolved-but-unrecovered cycle -- a failed executed
+            # intervention, or a NO_ACTION cycle with no spontaneous recovery
+            # -- is a Bernoulli failure for that cycle's decision cell,
+            # attributed the same way mark_recovered attributes a success
+            # (app/lifecycle.py). Recorded once per failed cycle, not once
+            # per case: a case with N failed retries then a recovery
+            # contributes beta += N, alpha += 1 -- the most trials, so the
+            # fastest posterior convergence. Without this the estimator only
+            # ever saw successes and beta never left cold start (ADR-0006's
+            # "beta += 1 on failure" was specified but had no live caller).
+            cell_key = resolve_last_decided_cell_key(case)
+            if cell_key is not None:
+                get_estimator().update(cell_key, source=case.source, success=False)
 
         if case.status != CaseStatus.OPEN or cycle >= _MAX_REASSESSMENT_CYCLES:
             break

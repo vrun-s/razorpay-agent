@@ -7,6 +7,7 @@ import random
 
 import pytest
 
+from app.allocator import AllocationCandidate, BudgetLedger, StreamingAllocator
 from app.estimator import get_estimator
 from app.models import Intervention, WorkflowType
 from app.simulator.generator import generate_population
@@ -16,6 +17,7 @@ from app.evaluation import (
     DEV_SIZE,
     HELD_OUT_SIZE,
     VALIDATION_SIZE,
+    _EVAL_RESERVE_RATIO,
     _case_seed,
     _percentile,
     _recovers_within_attempt_budget,
@@ -86,6 +88,28 @@ def test_case_seed_is_deterministic():
 def test_case_seed_differs_across_case_index_and_run_seed():
     assert _case_seed(7, 3) != _case_seed(7, 4)
     assert _case_seed(7, 3) != _case_seed(8, 3)
+
+
+# -- Reserve-free harness (ADR-0016) ---------------------------------------
+
+
+def test_eval_arms_run_without_a_budget_reserve():
+    """ADR-0016: the single-cell eval harness has no cross-case quality
+    signal to ration a reserve on, so every arm spends first-come-first-
+    served. A low-quality candidate that fits the remaining budget is funded
+    without the reserve-quality gate ever running -- with a 1/3 reserve the
+    same candidate is declined and the budget it needed is stranded, which
+    uniquely handicaps the truthfully-estimated AI arm against fixed_rule's
+    hardcoded neutral 0.5."""
+    assert _EVAL_RESERVE_RATIO == 0.0
+
+    ledger = BudgetLedger(recovery_budget=100_000, reserve_ratio=_EVAL_RESERVE_RATIO)
+    decision = StreamingAllocator(ledger).decide(
+        AllocationCandidate(case_id="c1", point_estimate=0.20, uncertainty=0.10, incentive_amount=100_000)
+    )
+
+    assert decision.funded
+    assert decision.reserved == 0
 
 
 # -- No-intervention arm ------------------------------------------------------

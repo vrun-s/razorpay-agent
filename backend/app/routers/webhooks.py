@@ -9,7 +9,7 @@ from app.db import get_session
 from app.gateway import Gateway, get_gateway
 from app.intake import create_case_from_failed_payment, create_case_from_halted_subscription
 from app.lifecycle import mark_recovered, record_processed_event
-from app.models import CaseStatus, ProcessedWebhookEvent, RecoveryCase
+from app.models import CaseStatus, EventSource, ProcessedWebhookEvent, RecoveryCase
 from app.schemas import RecoveryCaseRead
 from app.webhook_security import InvalidWebhookSignatureError, verify
 
@@ -37,6 +37,16 @@ def _extract_halted_subscription(payload: dict[str, Any]) -> dict[str, Any]:
             status_code=400, detail="malformed subscription.halted payload: missing payload.subscription.entity"
         )
     return subscription
+
+
+def _webhook_event_source() -> EventSource:
+    """A webhook arriving while the app is wired to real Razorpay
+    (`GATEWAY_BACKEND=razorpay`) is a real Razorpay event, so its case is
+    excluded from the Decision Engine's posterior (ticket 07 / ticket 20).
+    Under the fake gateway (dev, demo, tests) inbound webhooks are synthetic
+    and stay SIMULATED -- the pre-ticket-20 default, unchanged.
+    """
+    return EventSource.REAL if settings.gateway_backend == "razorpay" else EventSource.SIMULATED
 
 
 def _verify_and_get_event_id(request: Request, raw_body: bytes) -> str:
@@ -97,7 +107,9 @@ async def payment_failed(
     payment = _extract_failed_payment(parsed.payload)
     # Off the event loop: same thread FastAPI would use for a sync `def` route,
     # keeping the blocking SQLModel session work consistent with ADR-0008.
-    case = await run_in_threadpool(create_case_from_failed_payment, session, gateway, payment, event_id)
+    case = await run_in_threadpool(
+        create_case_from_failed_payment, session, gateway, payment, event_id, source=_webhook_event_source()
+    )
     return case
 
 
@@ -131,7 +143,9 @@ async def subscription_halted(
         raise HTTPException(status_code=400, detail=f"expected event 'subscription.halted', got {parsed.event!r}")
 
     subscription = _extract_halted_subscription(parsed.payload)
-    case = await run_in_threadpool(create_case_from_halted_subscription, session, gateway, subscription, event_id)
+    case = await run_in_threadpool(
+        create_case_from_halted_subscription, session, gateway, subscription, event_id, source=_webhook_event_source()
+    )
     return case
 
 

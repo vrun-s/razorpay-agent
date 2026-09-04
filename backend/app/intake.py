@@ -69,7 +69,9 @@ def create_case_from_halted_subscription(
     matured on failed-payment rather than a parallel bespoke pipeline.
 
     `source`/`allocator` default the same way and for the same reasons as the
-    sibling function above.
+    sibling function above. Ticket 20 adds the first non-script caller to pass
+    `source=EventSource.REAL`: `routers/webhooks.py` tags a case REAL when the
+    app is wired to real Razorpay (`GATEWAY_BACKEND=razorpay`).
     """
     case = RecoveryCase(
         workflow_type=WorkflowType.HALTED_SUBSCRIPTION,

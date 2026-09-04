@@ -45,6 +45,12 @@ def _webhook_event_source() -> EventSource:
     excluded from the Decision Engine's posterior (ticket 07 / ticket 20).
     Under the fake gateway (dev, demo, tests) inbound webhooks are synthetic
     and stay SIMULATED -- the pre-ticket-20 default, unchanged.
+
+    Reads the same `settings.gateway_backend` that `gateway.get_gateway()`
+    switches on, deliberately: the two agree by construction (get_gateway
+    derives the gateway from this flag), and there is no other signal at the
+    ingestion boundary -- a synthetic body is signed with the same secret as
+    a real one (that is the point of `webhook_security`).
     """
     return EventSource.REAL if settings.gateway_backend == "razorpay" else EventSource.SIMULATED
 
@@ -107,9 +113,7 @@ async def payment_failed(
     payment = _extract_failed_payment(parsed.payload)
     # Off the event loop: same thread FastAPI would use for a sync `def` route,
     # keeping the blocking SQLModel session work consistent with ADR-0008.
-    case = await run_in_threadpool(
-        create_case_from_failed_payment, session, gateway, payment, event_id, source=_webhook_event_source()
-    )
+    case = await run_in_threadpool(create_case_from_failed_payment, session, gateway, payment, event_id)
     return case
 
 

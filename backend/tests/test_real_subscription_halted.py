@@ -14,6 +14,7 @@ tagging is covered by `test_webhook_event_source.py`.
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -29,7 +30,7 @@ pytestmark = pytest.mark.skipif(
 
 
 @pytest.fixture()
-def real_payload() -> dict:
+def real_payload() -> dict[str, Any]:
     return json.loads(_FIXTURE.read_text())
 
 

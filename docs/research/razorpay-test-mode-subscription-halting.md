@@ -88,6 +88,72 @@ A second hands-on attempt succeeded where the 2026-08-22 one did not, matching t
   build uses, but it is now a *convenience*, not a *necessity* — a real-Razorpay halted slice is
   viable. See `.scratch/recovery-engine/issues/20-real-razorpay-halted-subscription-slice.md`.
 
+## Addendum 3 (2026-09-04) — the real webhook delivered, verified, and drove a case end to end
+
+Ticket 20 executed. The real trigger is now **proven**; one recovery-execution finding was
+recorded (not forced green), and one robustness bug it surfaced was fixed.
+
+### What was confirmed against real Razorpay test mode
+
+- **`active → halted` reproduced again** — `sub_TShz8bsVgJ2fAY` (and `sub_TSiXXXH44OuIe5` from the
+  2026-09-03 run) both sit `halted` in the dashboard. As in Addendum 1, "Charge this now →
+  Failure" on a *freshly created* sub (`sub_TXvYnFk7I3oane`) did **not** flip it — the invoices
+  just advanced and it stayed `active`. The mechanism stays "reproducible but finicky"; a sub that
+  actually reaches `halted` is what matters and those exist on demand.
+- **Razorpay delivers `subscription.halted` to a registered endpoint** — captured verbatim at
+  `test-scripts/captured/subscription-halted-20260904T103540-101081Z.json`
+  (`x-razorpay-event-id: TXve0iUjdw92Wn`). This closes the "webhook delivery unconfirmed" gap that
+  Addendum 2 left open.
+- **HMAC-SHA256 verification passes** — the capture proxy's independent check recorded
+  `signature_valid: true` against `RAZORPAY_WEBHOOK_SECRET`, and the backend's `webhook_security.verify()`
+  accepted the same body.
+- **Payload shape matches `routers/webhooks.py::_extract_halted_subscription` with no code change.**
+  Envelope is exactly the hand-built ticket-12 shape: `entity` / `event` / `contains` /
+  `payload.subscription.entity` / `created_at`. The real body is committed (PII scrubbed) as
+  `backend/tests/fixtures/real_subscription_halted.json`, and `tests/test_real_subscription_halted.py`
+  runs it through the full ingestion path as a regression guard.
+  Real-vs-synthetic deltas, all in fields nothing reads: `account_id`; a nested `plan` object
+  (which *does* carry the amount — `payload.subscription.entity.plan.item.amount: 50000` — the
+  ticket-12 "Plan-amount gap" is a *not-wired* gap, not a *missing-data* one); `customer_email` /
+  `customer_contact` on the entity; `halted_at`; `type`; `notes` as `[]` not `{}`;
+  `source: "dashboard"`.
+- **One `RecoveryCase`, `source=EventSource.REAL`, event-id dedupe works.** Replaying the captured
+  body twice (`test-scripts/replay_captured_halted.py`, re-signed, same `event_id`) created exactly
+  one case (`workflow_type=HALTED_SUBSCRIPTION`, `source=real`); the second POST returned the same
+  case with no new row.
+
+### Finding — `resume_charge` against a genuinely halted subscription is rejected
+
+`decide()` proposed `RESUME_CHARGE` (the only workflow-valid intervention for
+HALTED_SUBSCRIPTION), policy approved it, and the real call
+
+    POST /v1/subscriptions/sub_TShz8bsVgJ2fAY/resume  {"resume_at": "now"}
+
+returned **HTTP 400: `subscription can't be resumed as subscription is in completed state`**. This
+confirms the disclosed gap in `gateway.py::resume_charge`'s docstring: Razorpay's `/resume` is for
+`paused`, and there is no "resume from halted" API. `sub_TShz8bsVgJ2fAY` had also run out its term
+(`total_count=6, paid_count=6, remaining_count=-2`), hence "completed state" specifically; a sub
+halted mid-term might get a different rejection, untested. Per ticket 20 this is an accepted
+documented outcome, same disposition as ticket 17's failed-payment gaps — the recovery lever for a
+real halted subscription is not executable via the documented API.
+
+### Bug fixed — a rejected Gateway call used to 500 the webhook
+
+The `GatewayError` above propagated unhandled out of `/webhooks/subscription-halted` as a 500
+(the case still persisted — intake commits before the decision cycle — and Razorpay's delivery
+retry then deduped to 200). Fixed this session: `run_decision_cycle` now records a new
+`CaseHistoryEntryType.EXECUTION_FAILED` entry and leaves the case OPEN for the next reassessment /
+escalation. `override_case` has the same exposure, noted as a follow-up.
+
+### Honesty note on the two-step path
+
+The 16:05 real delivery hit a backend that was not yet on `GATEWAY_BACKEND=razorpay` (the case
+came through `source=simulated`, `FakeGateway`). The `source=real` tagging and the real `/resume`
+call were then obtained by **replaying that exact captured body** at a correctly-configured
+backend. The replay is byte-identical and re-signed with the same secret, so the ingestion path is
+identical — but "a real Razorpay HTTP request reached the correctly-configured backend" and "that
+backend called the real resume API" happened in two steps, not one continuous delivery.
+
 ## Sources
 
 Primary (Razorpay official docs), consulted directly via WebFetch or confirmed via search-engine indexing of the page:

@@ -128,10 +128,12 @@ stays the primary path — this is the "install nothing" fallback.
    ([ADR-0007](docs/adr/0007-evaluation-integrity.md)).
 
 Note: driving a test-mode subscription to `halted` on demand ("Charge this now → Failure" ×4) is
-reproducible but was historically finicky — see [What broke](#what-broke-and-how-we-got-out)
-below. The shipped build exercises the subscription workflow through synthetic
-`subscription.halted` events; a real-Razorpay halted slice is viable but not yet run end-to-end
-(webhook delivery unconfirmed).
+reproducible but finicky — see [What broke](#what-broke-and-how-we-got-out) below. The shipped
+build exercises the subscription workflow through synthetic `subscription.halted` events; the
+real-Razorpay halted slice **was run end-to-end on 2026-09-04** — real webhook received, HMAC
+verified, case created (`source=REAL`), event-id dedupe confirmed. `resume_charge` on a genuinely
+halted subscription is rejected by Razorpay (`400 "subscription can't be resumed"`), a documented
+recovery-execution limit (see the research doc's Addendum 3).
 </details>
 
 ---
@@ -311,10 +313,13 @@ burn a 15-day budget on trial-and-error against someone else's dashboard, we wro
 empirical finding
 ([`docs/research/razorpay-test-mode-subscription-halting.md`](docs/research/razorpay-test-mode-subscription-halting.md))
 and drove the workflow with **synthetic `subscription.halted` events** through the same verified
-ingestion path instead. A later attempt (2026-09-03) *did* reproduce the `active → halted`
-transition on the fourth failure, so the synthetic-event path is now a convenience rather than a
-necessity — though real `subscription.halted` **webhook delivery** still needs one clean
-end-to-end confirmation. The workflow ships either way.
+ingestion path instead. Later attempts reproduced it: the `active → halted` transition on the
+fourth failure (2026-09-03), and on 2026-09-04 the **full real slice** — Razorpay delivered
+`subscription.halted` to the registered endpoint, HMAC verification passed, a `source=REAL` case
+was created and event-id dedupe held. The one real-API limit found: `resume_charge` against a
+genuinely halted subscription is rejected (`400 "subscription can't be resumed as subscription is
+in completed state"`), now recorded as an `EXECUTION_FAILED` history entry rather than a 500. The
+synthetic-event path is a convenience; the real trigger is proven. The workflow ships either way.
 
 **The evaluation could have been circular.** The simulator defines ground-truth recovery
 probability; the estimator estimates that same quantity. If the estimator were built with

@@ -76,6 +76,19 @@ def webhook_secret(monkeypatch):
     monkeypatch.setattr(settings, "razorpay_webhook_secret", TEST_WEBHOOK_SECRET)
 
 
+@pytest.fixture(autouse=True)
+def fake_gateway_backend(monkeypatch):
+    """Pin the gateway to the in-process fake for every test, independent of
+    `.env`. A real-Razorpay run (ticket 20) puts `GATEWAY_BACKEND=razorpay` and
+    live keys in the repo-root `.env` that `config.py` loads; without this,
+    `pytest` run from that checkout would send every full-engine test at
+    `api.razorpay.com`. Tests that want the real gateway (`test_gateway.py`,
+    `test_webhook_event_source.py`) monkeypatch it back on top."""
+    monkeypatch.setattr(settings, "gateway_backend", "fake")
+    monkeypatch.setattr(settings, "razorpay_key_id", None)
+    monkeypatch.setattr(settings, "razorpay_key_secret", None)
+
+
 def mock_razorpay_client(handler) -> httpx.Client:
     """An httpx.Client wired to a MockTransport, standing in for Razorpay itself
     -- shared by every RazorpayGateway test so none of them hit the network."""

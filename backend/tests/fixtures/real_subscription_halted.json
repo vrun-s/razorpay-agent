@@ -1,0 +1,72 @@
+{
+  "entity": "event",
+  "account_id": "acc_TESTACCOUNT0000",
+  "event": "subscription.halted",
+  "contains": [
+    "subscription"
+  ],
+  "payload": {
+    "subscription": {
+      "entity": {
+        "id": "sub_TShz8bsVgJ2fAY",
+        "entity": "subscription",
+        "plan_id": "plan_TShyH2gFlNKPja",
+        "plan": {
+          "id": "plan_TShyH2gFlNKPja",
+          "entity": "plan",
+          "interval": 7,
+          "period": "daily",
+          "item": {
+            "id": "item_TShyH25z0RcLQy",
+            "active": true,
+            "name": "Test plan",
+            "description": "test#1",
+            "amount": 50000,
+            "unit_amount": 50000,
+            "currency": "INR",
+            "type": "plan",
+            "unit": null,
+            "tax_inclusive": false,
+            "hsn_code": null,
+            "sac_code": null,
+            "tax_rate": null,
+            "tax_id": null,
+            "tax_group_id": null,
+            "created_at": 1787378285,
+            "updated_at": 1787378285
+          },
+          "notes": [],
+          "created_at": 1787378285
+        },
+        "customer_id": "cust_TSi3enc2D0yfSa",
+        "customer_email": "redacted@example.com",
+        "customer_contact": "+910000000000",
+        "status": "halted",
+        "type": 1,
+        "current_start": 1791612192,
+        "current_end": 1792216992,
+        "ended_at": null,
+        "quantity": 1,
+        "notes": [],
+        "charge_at": 1792216992,
+        "start_at": 1787378592,
+        "end_at": 1790402592,
+        "auth_attempts": 0,
+        "total_count": 6,
+        "paid_count": 6,
+        "customer_notify": true,
+        "created_at": 1787378335,
+        "expire_by": null,
+        "short_url": null,
+        "has_scheduled_changes": false,
+        "change_scheduled_at": null,
+        "source": "dashboard",
+        "payment_method": "card",
+        "offer_id": null,
+        "halted_at": 1788518135,
+        "remaining_count": -2
+      }
+    }
+  },
+  "created_at": 1788518138
+}

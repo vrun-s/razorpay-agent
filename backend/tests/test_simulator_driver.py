@@ -88,6 +88,30 @@ def test_a_recovered_case_feeds_its_outcome_back_into_the_estimator(session):
     assert any(estimate != cold_estimate for estimate in warmed_estimates)
 
 
+def test_an_unrecovered_cycle_feeds_a_failure_back_into_the_estimator(session):
+    """The success path (mark_recovered -> update(success=True)) has always
+    closed the loop; the failure path did not exist. A resolved-but-
+    unrecovered cycle -- a failed executed retry, or a NO_ACTION cycle with
+    no spontaneous recovery -- was silently dropped, so every cell's beta
+    stayed pinned at its Beta(2,2) cold start and p-hat could only ever
+    climb. Driving a population with a non-saturated recovery rate must now
+    push the retry cell's beta above cold start."""
+    from app.estimator import _COLD_START_BETA
+
+    population = generate_population(seed=3, size=20)
+
+    run_simulated_population(session, population, workflow_type=WorkflowType.FAILED_PAYMENT, rng=random.Random(3))
+
+    retry_cell = get_estimator()._cell(
+        EstimatorCellKey(
+            failure_reason="insufficient_funds",
+            customer_segment_proxy=CustomerSegmentProxy.NEW,
+            intervention=Intervention.PAYMENT_RETRY,
+        )
+    )
+    assert retry_cell.beta > _COLD_START_BETA
+
+
 def test_case_reaches_a_terminal_or_bounded_state_not_left_mid_cycle(session):
     [simulated] = generate_population(seed=4, size=1)
 

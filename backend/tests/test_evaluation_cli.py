@@ -36,7 +36,7 @@ def test_report_to_dict_is_json_serializable():
 
 
 def test_write_report_and_main_write_a_parseable_artifact(tmp_path, monkeypatch):
-    monkeypatch.setattr(evaluation, "_split_cases", lambda split, seed: generate_population(seed, 12))
+    monkeypatch.setattr(evaluation, "_split_cases", lambda split, seed, **sizes: generate_population(seed, 12))
     out = tmp_path / "report.json"
 
     _main(["--split", "dev", "--out", str(out), "--bootstrap-resamples", "200"])
@@ -47,6 +47,6 @@ def test_write_report_and_main_write_a_parseable_artifact(tmp_path, monkeypatch)
 
 
 def test_write_report_returns_the_path(tmp_path, monkeypatch):
-    monkeypatch.setattr(evaluation, "_split_cases", lambda split, seed: generate_population(seed, 8))
+    monkeypatch.setattr(evaluation, "_split_cases", lambda split, seed, **sizes: generate_population(seed, 8))
     out = tmp_path / "r.json"
     assert write_report(split="dev", out_path=out, n_bootstrap_resamples=100) == out

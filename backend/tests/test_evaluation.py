@@ -14,9 +14,13 @@ from app.simulator.generator import generate_population
 from app.evaluation import (
     ArmResult,
     CaseResult,
+    DATASET_SEED_1000,
     DEV_SIZE,
+    DEV_SIZE_1000,
     HELD_OUT_SIZE,
+    HELD_OUT_SIZE_1000,
     VALIDATION_SIZE,
+    VALIDATION_SIZE_1000,
     _EVAL_RESERVE_RATIO,
     _case_seed,
     _percentile,
@@ -57,6 +61,19 @@ def test_default_split_sizes_match_the_adr():
 
 def test_default_sizes_are_300_150_200():
     assert (DEV_SIZE, VALIDATION_SIZE, HELD_OUT_SIZE) == (300, 150, 200)
+
+
+def test_1000_dataset_sizes_sum_to_1000_under_its_own_seed():
+    """A second, larger population kept alongside the ADR-0013 300/150/200
+    numbers rather than replacing them (see evaluation.py's own comment)."""
+    assert (DEV_SIZE_1000, VALIDATION_SIZE_1000, HELD_OUT_SIZE_1000) == (600, 200, 200)
+    assert DEV_SIZE_1000 + VALIDATION_SIZE_1000 + HELD_OUT_SIZE_1000 == 1000
+    assert DATASET_SEED_1000 != 20260826
+
+    splits = generate_dataset_splits(
+        DATASET_SEED_1000, dev_size=DEV_SIZE_1000, validation_size=VALIDATION_SIZE_1000, held_out_size=HELD_OUT_SIZE_1000
+    )
+    assert (len(splits.dev), len(splits.validation), len(splits.held_out)) == (600, 200, 200)
 
 
 def test_splits_are_a_fixed_sequential_partition_of_one_population():

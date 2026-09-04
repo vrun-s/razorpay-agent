@@ -5,8 +5,7 @@
 
 .env
 .env.*
-!.env.example
-
+.env.example
 # Backend (Python / uv)
 backend/.venv
 backend/**/__pycache__

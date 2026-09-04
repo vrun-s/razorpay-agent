@@ -78,6 +78,16 @@ DEV_SIZE = 300
 VALIDATION_SIZE = 150
 HELD_OUT_SIZE = 200
 
+# A second, larger population under its own seed -- kept alongside the
+# ADR-0013 numbers above rather than replacing them, so existing case
+# indices/evaluation_report*.json stay reproducible. 600/200/200 = 1000,
+# picked over a proportional scaling of 300/150/200 (~462/231/308) for round
+# split sizes.
+DATASET_SEED_1000 = 20260904
+DEV_SIZE_1000 = 600
+VALIDATION_SIZE_1000 = 200
+HELD_OUT_SIZE_1000 = 200
+
 
 @dataclass(frozen=True)
 class DatasetSplits:
@@ -682,8 +692,15 @@ def report_to_dict(report: EvaluationReport) -> dict[str, Any]:
     }
 
 
-def _split_cases(split: str, seed: int) -> list[SimulatedCase]:
-    splits = generate_dataset_splits(seed)
+def _split_cases(
+    split: str,
+    seed: int,
+    *,
+    dev_size: int = DEV_SIZE,
+    validation_size: int = VALIDATION_SIZE,
+    held_out_size: int = HELD_OUT_SIZE,
+) -> list[SimulatedCase]:
+    splits = generate_dataset_splits(seed, dev_size=dev_size, validation_size=validation_size, held_out_size=held_out_size)
     return {"dev": splits.dev, "validation": splits.validation, "held_out": splits.held_out}[split]
 
 
@@ -698,13 +715,18 @@ def write_report(
     split: str = DASHBOARD_SPLIT,
     dataset_seed: int = DEFAULT_DATASET_SEED,
     run_seed: int = DEFAULT_DATASET_SEED,
+    dev_size: int = DEV_SIZE,
+    validation_size: int = VALIDATION_SIZE,
+    held_out_size: int = HELD_OUT_SIZE,
     out_path: Path = DEFAULT_REPORT_PATH,
     n_bootstrap_resamples: int = 10_000,
 ) -> Path:
     """Runs the harness once on `split` and writes the JSON artifact the
     dashboard serves. Returns the path written."""
     report = run_evaluation(
-        _split_cases(split, dataset_seed),
+        _split_cases(
+            split, dataset_seed, dev_size=dev_size, validation_size=validation_size, held_out_size=held_out_size
+        ),
         run_seed=run_seed,
         n_bootstrap_resamples=n_bootstrap_resamples,
     )
@@ -718,6 +740,9 @@ def _main(argv: list[str] | None = None) -> None:
     parser.add_argument("--split", choices=("dev", "validation", "held_out"), default=DASHBOARD_SPLIT)
     parser.add_argument("--dataset-seed", type=int, default=DEFAULT_DATASET_SEED)
     parser.add_argument("--run-seed", type=int, default=DEFAULT_DATASET_SEED)
+    parser.add_argument("--dev-size", type=int, default=DEV_SIZE)
+    parser.add_argument("--validation-size", type=int, default=VALIDATION_SIZE)
+    parser.add_argument("--held-out-size", type=int, default=HELD_OUT_SIZE)
     parser.add_argument("--out", type=Path, default=DEFAULT_REPORT_PATH)
     parser.add_argument("--bootstrap-resamples", type=int, default=10_000)
     args = parser.parse_args(argv)
@@ -726,6 +751,9 @@ def _main(argv: list[str] | None = None) -> None:
         split=args.split,
         dataset_seed=args.dataset_seed,
         run_seed=args.run_seed,
+        dev_size=args.dev_size,
+        validation_size=args.validation_size,
+        held_out_size=args.held_out_size,
         out_path=args.out,
         n_bootstrap_resamples=args.bootstrap_resamples,
     )

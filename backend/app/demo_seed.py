@@ -7,13 +7,15 @@ makes every beat test2108.md §13 asks for visible in the dashboard:
 - a policy rejection that names the constraint that bound it,
 - an escalation with a human override written back to the audit trail,
 - a standing escalation left in the queue for the demo to act on live,
-- bulk cases so the Reserved Budget trace has length,
 - ticket 19/ADR-0014's reserve-mechanism beat: a mediocre case's real
   Incentive spend visibly declined, then a stronger case's funded from the
   reserve (spec story 31) -- on a `recovery_budget` deliberately sized below
   what the two cases' incentives would cost together, and ordered
   mediocre-then-better. This sizing/ordering is demo-only tuning (ADR-0014):
-  the evaluation harness never reads it.
+  the evaluation harness never reads it. Run *before* the bulk cases below
+  (not after) so this tiny, deliberately undersized ledger isn't what the
+  Reserved Budget dashboard tab's summary cards land on last.
+- bulk cases so the Reserved Budget trace has length,
 
 Run it with `uv run python -m app.demo_seed` (wipes and reseeds). Everything
 flows through the real app/lifecycle.py engine with the `FakeGateway` /
@@ -193,20 +195,7 @@ def seed_demo(session: Session, gateway: Gateway | None = None) -> list[Recovery
     )
     cases.append(standing)
 
-    # 6. Bulk cases so the Reserved Budget trace has length; alternate ones
-    #    are left open, the rest recovered.
-    for i in range(8):
-        pid = f"pay_demo_bulk_{i}"
-        bulk = _create_case(session, _failed_payment(pid))
-        run_decision_cycle(session, gateway, bulk, payment=_failed_payment(pid), allocator=allocator)
-        if i % 2 == 0:
-            mark_recovered(
-                session, bulk, event_id=f"evt_outcome_bulk_{i}",
-                reason=f"payment {pid} captured", trigger="payment.captured",
-            )
-        cases.append(bulk)
-
-    # 7. Reserve mechanism made visible with real Incentive money (spec
+    # 6. Reserve mechanism made visible with real Incentive money (spec
     #    story 31, ADR-0014): `_RESERVE_DEMO_MERCHANT_CONFIG` sizes
     #    recovery_budget below what these two cases' incentives would cost
     #    together, on its own allocator so the rest of the run's spend can't
@@ -214,6 +203,15 @@ def seed_demo(session: Session, gateway: Gateway | None = None) -> list[Recovery
     #    incentive is genuinely declined (it still executes, degraded to a
     #    free retry per ADR-0014 -- not skipped); the better case's is
     #    funded from the reserve.
+    #
+    #    Deliberately run *before* the bulk block below, not after: the
+    #    Reserved Budget dashboard tab (BudgetTimeline.tsx) summarizes the
+    #    *last* entry in the merged, chronologically-ordered timeline across
+    #    every allocator in this run. This scenario's ledger is intentionally
+    #    tiny (recovery_budget=3_600 paise) to force the decline; if it ran
+    #    last, the dashboard's headline BUDGET/RESERVED/AVAILABLE cards would
+    #    read that tiny scenario's numbers instead of the main run's, making
+    #    the whole tab look broken rather than demonstrating the mechanism.
     reserve_allocator = StreamingAllocator(
         BudgetLedger(recovery_budget=_RESERVE_DEMO_MERCHANT_CONFIG.recovery_budget, reserve_ratio=1 / 3)
     )
@@ -250,6 +248,21 @@ def seed_demo(session: Session, gateway: Gateway | None = None) -> list[Recovery
         reason="payment pay_demo_reserve_better captured", trigger="payment.captured",
     )
     cases.append(better)
+
+    # 7. Bulk cases so the Reserved Budget trace has length; alternate ones
+    #    are left open, the rest recovered. Run last (see step 6's comment)
+    #    so the dashboard's summary cards land on the main ₹10,000-budget
+    #    run's numbers. 20 cases (was 8) for a fuller-looking trace.
+    for i in range(20):
+        pid = f"pay_demo_bulk_{i}"
+        bulk = _create_case(session, _failed_payment(pid))
+        run_decision_cycle(session, gateway, bulk, payment=_failed_payment(pid), allocator=allocator)
+        if i % 2 == 0:
+            mark_recovered(
+                session, bulk, event_id=f"evt_outcome_bulk_{i}",
+                reason=f"payment {pid} captured", trigger="payment.captured",
+            )
+        cases.append(bulk)
 
     return cases
 

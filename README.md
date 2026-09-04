@@ -225,24 +225,25 @@ is apples-to-apples rather than four uncontrolled runs.
   point estimate.
 
 Results on the **held-out split** (200 cases, `failed_payment` workflow, dataset seed `20260826`),
-from `backend/evaluation_report_held_out.json`, regenerated at commit `e669397` (ticket 19,
-`response-curves-v2`):
+from `backend/evaluation_report_held_out.json`:
 
 | Arm | Recovered | Incentive spend | Net Recovered Revenue |
 |---|---:|---:|---:|
 | No intervention | 35 / 200 | ₹0 | ₹17,500 |
 | Fixed rule (flat 5%, every case) | 144 / 200 | ₹9,025 | ₹62,975 |
-| **AI treatment** | **130 / 200** | **₹5,000** | **₹60,000** |
+| **AI treatment** | **129 / 200** | **₹4,900** | **₹59,600** |
 | Offline-optimal (full hindsight) | 139 / 200 | ₹0 | ₹69,500 |
 
-- The AI captures **86.3%** of the offline-optimal NRR ceiling.
-- **vs no intervention:** +₹212.50 per case, 95% CI **[₹177.50, ₹247.50]** — excludes zero, so the
-  lift is real (+₹42,500 across the split).
-- **vs the flat-5% fixed rule:** −₹14.88 per case, 95% CI **[−₹34.00, +₹1.63]** — the interval
-  straddles zero. On NRR alone the AI is statistically indistinguishable from a well-tuned blanket
-  discount here — **but it gets there spending ~45% less incentive budget** (₹5,000 vs ₹9,025) for
-  ~90% of the recoveries, and it makes the spend / don't-spend call online under a reserve with no
-  foresight. That efficiency, not a bigger NRR number, is the point.
+- The AI captures **85.8%** of the offline-optimal NRR ceiling.
+- **vs no intervention:** +₹210.50 per case, 95% CI **[+₹175.63, +₹245.38]** — excludes zero, so
+  the lift is real (+₹42,100 across the split).
+- **vs the flat-5% fixed rule:** −₹16.88 per case, 95% CI **[−₹36.13, +₹0.00]** — the interval's
+  upper bound sits at zero. On NRR alone the AI is statistically indistinguishable from, to
+  marginally behind, a well-tuned blanket discount here — **but it gets there spending ~46% less
+  incentive budget** (₹4,900 vs ₹9,025) for ~90% of the recoveries, and it makes the spend /
+  don't-spend call online with no foresight. That efficiency, not a bigger NRR number, is the
+  point — and the two design limits that keep it from beating the flat rule on NRR are written up,
+  not hidden (see **Documented findings** below).
 
 Calibration (predicted vs. observed recovery rate per probability bucket) is in the dashboard's
 **Evaluation** tab.
@@ -261,6 +262,38 @@ default and feeds the dashboard; `held_out` is touched once, for this headline
 Before these numbers are trusted, a **misspecification stress test** (`stress_test.py`) perturbs
 the simulator's persona mix, response elasticities, and fatigue decay by ±20% and re-runs the
 full evaluation; the lift must survive at least 2 of 3 perturbations.
+
+---
+
+## Documented findings
+
+Building the evaluation surfaced two design limits **in our own agent**. We report them rather
+than tune around them — a suspiciously clean win two days before a deadline is the worse outcome.
+Full analysis with numbers: [`docs/evaluation-findings-2026-09.md`](docs/evaluation-findings-2026-09.md).
+
+**1. The reserve mechanism can't be measured with a single estimator cell.** In the eval harness
+every case carries the same failure reason and customer segment, so the recovery-probability
+estimator has effectively one cell. Once its online update was fixed (finding 3), that cell
+converges to a *truthful* `p̂ ≈ 0.35` — which never clears the Streaming Allocator's absolute
+0.5 reserve-quality gate. So the AI arm strands its reserved third once its main pool is spent,
+while the flat-rule baseline (fed a hardcoded 0.5) spends through. The absolute quality bar is an
+anti-lever for a *calibrated* estimator. Fix shipped for the eval harness only
+([ADR-0016](docs/adr/0016-evaluation-harness-runs-without-reserve.md): run every arm with the
+reserve off, since a one-cell estimator has nothing to ration on); the live/demo path still
+reserves a third. A relative / opportunity-cost reserve gate is the real fix, deferred.
+
+**2. Greedy `decide()` under a flat incentive gives the AI almost nothing to differ on.** With a
+flat incentive (ADR-0014) and frozen response curves where Payment Retry dominates No-Action for
+every persona, the greedy decision rule proposes the *same* intervention as the flat rule on
+nearly every case. Worse, because retry is proposed almost every time, the no-action cell stays
+near its cold-start prior; when the retry cell dips below it, `decide()` briefly flips to
+No-Action and under-recovers a stretch of cases. This oscillation is where the small
+AI-vs-flat-rule NRR gap comes from. Accepted and documented, not fixed — non-greedy exploration
+(Thompson / UCB) or a wider prior is a post-submission change.
+
+The upshot: on this evaluation the learned policy *matches* a well-tuned flat rule on NRR at ~half
+the incentive spend, and decisively beats no intervention — it does not out-NRR the flat rule, and
+findings 1 and 2 are why.
 
 ---
 
@@ -322,7 +355,8 @@ stress test; a judge-facing observability dashboard.
 | Path | What it is |
 |---|---|
 | [`CONTEXT.md`](CONTEXT.md) | Domain vocabulary — every term, with the wrong synonyms called out |
-| [`docs/adr/`](docs/adr/) | 15 architecture decision records — the *why* behind each choice |
+| [`docs/adr/`](docs/adr/) | 16 architecture decision records — the *why* behind each choice |
+| [`docs/evaluation-findings-2026-09.md`](docs/evaluation-findings-2026-09.md) | Two documented design limits the evaluation surfaced in our own agent |
 | [`.scratch/recovery-engine/spec.md`](.scratch/recovery-engine/spec.md) | Problem statement, solution, all 53 user stories, cut order |
 | [`docs/research/`](docs/research/) | Razorpay-specific empirical research (retry ladder, `halted` testability) |
 | [`docs/agent-handoffs/`](docs/agent-handoffs/) | Chronological build narrative, session by session |

@@ -17,7 +17,7 @@ from app.allocator import AllocationCandidate, StreamingAllocator, get_allocator
 from app.config import settings
 from app.decision import VALID_INTERVENTIONS, DecisionInput, decide, resolve_cell_key, resolve_last_decided_cell_key
 from app.estimator import CustomerHistory, get_estimator
-from app.gateway import Gateway
+from app.gateway import Gateway, GatewayError
 from app.llm import LLMClient, get_llm_client
 from app.merchant_config import DEFAULT_MERCHANT_CONFIG, MerchantConfig
 from app.models import (
@@ -260,7 +260,57 @@ def run_decision_cycle(
         if allocation_decision.funded:
             funded_incentive_amount = incentive_amount
 
-    if policy_result.approved and intervention == Intervention.PAYMENT_RETRY:
+    if policy_result.approved and intervention in (Intervention.PAYMENT_RETRY, Intervention.RESUME_CHARGE):
+        try:
+            _execute_intervention(
+                session,
+                gateway,
+                case,
+                intervention=intervention,
+                payment=payment,
+                funded_incentive_amount=funded_incentive_amount,
+            )
+        except GatewayError as exc:
+            # A real Gateway call reached Razorpay and was rejected (ticket 20:
+            # a genuinely halted subscription is not resumable via /resume).
+            # Record the failed attempt and leave the case OPEN for the next
+            # reassessment / escalation -- never surface it as a 500 to the
+            # webhook caller, which just makes Razorpay retry the delivery.
+            log_entry(
+                session,
+                case,
+                CaseHistoryEntryType.EXECUTION_FAILED,
+                f"Gateway rejected {intervention.value}: {exc}",
+                {
+                    "intervention": intervention.value,
+                    "incentive_amount": funded_incentive_amount,
+                    "error": str(exc),
+                },
+            )
+
+    if case.status == CaseStatus.OPEN:
+        case.response_window_expires_at = _now() + timedelta(seconds=settings.response_window_seconds)
+        session.add(case)
+
+    session.commit()
+    session.refresh(case)
+    return case
+
+
+def _execute_intervention(
+    session: Session,
+    gateway: Gateway,
+    case: RecoveryCase,
+    *,
+    intervention: Intervention,
+    payment: dict[str, Any],
+    funded_incentive_amount: int,
+) -> None:
+    """The policy-approved execution over the Gateway seam. Raises
+    `GatewayError` if a real Gateway call reached Razorpay and was rejected --
+    `run_decision_cycle` catches that and records an EXECUTION_FAILED entry.
+    """
+    if intervention == Intervention.PAYMENT_RETRY:
         result = gateway.create_payment_link(
             case_id=case.id,
             amount=payment.get("amount", 0),
@@ -282,7 +332,7 @@ def run_decision_cycle(
                 "incentive_amount": funded_incentive_amount,
             },
         )
-    elif policy_result.approved and intervention == Intervention.RESUME_CHARGE:
+    elif intervention == Intervention.RESUME_CHARGE:
         result = gateway.resume_charge(
             case_id=case.id,
             subscription_id=case.external_reference_id or "",
@@ -300,14 +350,6 @@ def run_decision_cycle(
                 "incentive_amount": funded_incentive_amount,
             },
         )
-
-    if case.status == CaseStatus.OPEN:
-        case.response_window_expires_at = _now() + timedelta(seconds=settings.response_window_seconds)
-        session.add(case)
-
-    session.commit()
-    session.refresh(case)
-    return case
 
 
 def _stop_case(session: Session, case: RecoveryCase, *, reason: str) -> None:
@@ -337,6 +379,11 @@ def override_case(session: Session, gateway: Gateway, case: RecoveryCase, *, int
     human already decided -- but reuses the same DECISION/EXECUTION entry
     shapes and Gateway seam a Reassessment would, so Case History carries no
     side channel.
+
+    Follow-up (ticket 20): unlike `run_decision_cycle`, a `GatewayError` here
+    still propagates. A human retrying an override sees the error directly, so
+    it is lower-severity than a webhook 500, but the EXECUTION_FAILED handling
+    should be lifted here too.
     """
     if intervention not in VALID_INTERVENTIONS[case.workflow_type]:
         raise ValueError(f"{intervention.value} is not a valid intervention for {case.workflow_type.value}")

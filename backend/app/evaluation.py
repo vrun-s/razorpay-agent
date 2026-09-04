@@ -161,6 +161,17 @@ FIXED_RULE_DISCOUNT_PCT = 5.0
 _MAX_ARM_CYCLES = 10  # mirrors app/simulator_driver.py's own safety bound
 _NEUTRAL_QUALITY_SCORE = 0.5  # matches the estimator's own Beta(2,2) cold-start mean
 
+# ADR-0016: the eval harness's estimator collapses to a single non-trivial
+# cell (failure_reason and customer_segment_proxy are both constant across
+# every simulated case), so there is no cross-case quality signal to ration a
+# reserve on. A calibrated p-hat that converges below the allocator's
+# min-quality gate would strand the reserved third for the AI arm while
+# fixed_rule (fed a neutral 0.5) spends through -- an artefact of the
+# single-cell harness, not a real allocation decision. Run every arm
+# first-come-first-served instead. The live/demo path keeps
+# app/allocator.py's _DEFAULT_RESERVE_RATIO = 1/3 untouched.
+_EVAL_RESERVE_RATIO = 0.0
+
 
 # -- No-intervention arm ---------------------------------------------------
 
@@ -190,7 +201,7 @@ def run_no_intervention_arm(
     for simulated in cases:
         case = RecoveryCase(workflow_type=workflow_type, source=EventSource.SIMULATED)
         policy_result = validate(case, ProposedIntervention(intervention=Intervention.NO_ACTION), policy, case_value=case_value)
-        allocator = StreamingAllocator(BudgetLedger(recovery_budget=policy.recovery_budget, reserve_ratio=1 / 3))
+        allocator = StreamingAllocator(BudgetLedger(recovery_budget=policy.recovery_budget, reserve_ratio=_EVAL_RESERVE_RATIO))
         allocation = allocator.decide(
             AllocationCandidate(case_id=case.id, point_estimate=_NEUTRAL_QUALITY_SCORE, uncertainty=0.0, incentive_amount=0)
         )
@@ -241,7 +252,7 @@ def run_fixed_rule_arm(
     for simulated in cases:
         case = RecoveryCase(workflow_type=workflow_type, source=EventSource.SIMULATED)
         gateway = SimulatorGateway(simulated.hidden, rng=random.Random(_case_seed(run_seed, simulated.case_index)))
-        allocator = StreamingAllocator(BudgetLedger(recovery_budget=policy.recovery_budget, reserve_ratio=1 / 3))
+        allocator = StreamingAllocator(BudgetLedger(recovery_budget=policy.recovery_budget, reserve_ratio=_EVAL_RESERVE_RATIO))
 
         recovered = False
         total_cost = 0
@@ -406,7 +417,7 @@ def run_ai_treatment_arm(
     engine = _ephemeral_engine()
     SQLModel.metadata.create_all(engine)
     allocator = StreamingAllocator(
-        BudgetLedger(recovery_budget=DEFAULT_MERCHANT_CONFIG.recovery_budget, reserve_ratio=1 / 3)
+        BudgetLedger(recovery_budget=DEFAULT_MERCHANT_CONFIG.recovery_budget, reserve_ratio=_EVAL_RESERVE_RATIO)
     )
 
     results = []

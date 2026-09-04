@@ -350,6 +350,8 @@ def _execute_intervention(
                 "incentive_amount": funded_incentive_amount,
             },
         )
+    else:  # caller's guard tuple must stay in sync -- fail loud if it drifts
+        raise ValueError(f"{intervention.value} has no Gateway execution path")
 
 
 def _stop_case(session: Session, case: RecoveryCase, *, reason: str) -> None:

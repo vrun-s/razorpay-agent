@@ -161,7 +161,8 @@ _STAGE_BY_ENTRY: dict[CaseHistoryEntryType, str] = {
     CaseHistoryEntryType.POLICY_CHECK: "policy_check",
     CaseHistoryEntryType.ALLOCATION_CHECK: "allocation",
     CaseHistoryEntryType.EXECUTION: "execution",
-    CaseHistoryEntryType.EXECUTION_FAILED: "execution",
+    # Its own timeline beat -- a rejected Gateway call is not a successful one.
+    CaseHistoryEntryType.EXECUTION_FAILED: "execution_failed",
     CaseHistoryEntryType.REASSESSMENT_TRIGGERED: "reassessment",
     CaseHistoryEntryType.CASE_RECOVERED: "outcome",
     CaseHistoryEntryType.CASE_STOPPED: "outcome",

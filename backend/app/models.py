@@ -47,10 +47,10 @@ class CaseHistoryEntryType(StrEnum):
     POLICY_CHECK = "policy_check"
     ALLOCATION_CHECK = "allocation_check"
     EXECUTION = "execution"
-    # A policy-approved intervention whose real Gateway call reached Razorpay
-    # and was rejected (ticket 20). Distinct from EXECUTION: nothing happened
-    # on Razorpay's side, so the retry-cap count, the sweep's "executed" test,
-    # and the observability funnel all deliberately ignore it.
+    # Ticket 20: a policy-approved intervention whose real Gateway call reached
+    # Razorpay and was rejected. Its own type, not EXECUTION -- `policy`'s
+    # retry-cap count and the sweep's "executed" test both match `== EXECUTION`,
+    # so a rejected call inflates neither.
     EXECUTION_FAILED = "execution_failed"
     REASSESSMENT_TRIGGERED = "reassessment_triggered"
     CASE_RECOVERED = "case_recovered"

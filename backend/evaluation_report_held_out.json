@@ -18,61 +18,68 @@
       "recovered_count": 139
     },
     "ai_treatment": {
-      "total_nrr": 6000000,
+      "total_nrr": 5960000,
       "case_count": 200,
-      "recovered_count": 130
+      "recovered_count": 129
     }
   },
   "baselines": [
     {
       "baseline_name": "no_intervention",
-      "incremental_nrr": 21250.0,
-      "ci_lower": 17750.0,
-      "ci_upper": 24750.0
+      "incremental_nrr": 21050.0,
+      "ci_lower": 17562.5,
+      "ci_upper": 24537.5
     },
     {
       "baseline_name": "fixed_rule",
-      "incremental_nrr": -1487.5,
-      "ci_lower": -3400.0,
-      "ci_upper": 162.5
+      "incremental_nrr": -1687.5,
+      "ci_lower": -3612.5,
+      "ci_upper": 0.0
     }
   ],
-  "pct_of_offline_optimal": 0.8633093525179856,
+  "pct_of_offline_optimal": 0.8575539568345324,
   "calibration": [
+    {
+      "bucket_low": 0.1,
+      "bucket_high": 0.2,
+      "mean_predicted": 0.18400697885992004,
+      "observed_rate": 0.2,
+      "count": 5
+    },
+    {
+      "bucket_low": 0.2,
+      "bucket_high": 0.30000000000000004,
+      "mean_predicted": 0.25822791419176866,
+      "observed_rate": 0.2903225806451613,
+      "count": 62
+    },
+    {
+      "bucket_low": 0.30000000000000004,
+      "bucket_high": 0.4,
+      "mean_predicted": 0.3346390927359534,
+      "observed_rate": 0.33229813664596275,
+      "count": 322
+    },
+    {
+      "bucket_low": 0.4,
+      "bucket_high": 0.5,
+      "mean_predicted": 0.4243386243386243,
+      "observed_rate": 0.0,
+      "count": 3
+    },
     {
       "bucket_low": 0.5,
       "bucket_high": 0.6000000000000001,
-      "mean_predicted": 0.575,
-      "observed_rate": 0.5,
-      "count": 4
+      "mean_predicted": 0.5387755102040817,
+      "observed_rate": 0.42857142857142855,
+      "count": 7
     },
     {
       "bucket_low": 0.6000000000000001,
       "bucket_high": 0.7000000000000001,
       "mean_predicted": 0.6666666666666666,
-      "observed_rate": 1.0,
+      "observed_rate": 0.0,
       "count": 1
-    },
-    {
-      "bucket_low": 0.7000000000000001,
-      "bucket_high": 0.8,
-      "mean_predicted": 0.7658730158730159,
-      "observed_rate": 0.3,
-      "count": 10
-    },
-    {
-      "bucket_low": 0.8,
-      "bucket_high": 0.9,
-      "mean_predicted": 0.851166114832634,
-      "observed_rate": 0.35714285714285715,
-      "count": 28
-    },
-    {
-      "bucket_low": 0.9,
-      "bucket_high": 1.0,
-      "mean_predicted": 0.96649823288713,
-      "observed_rate": 0.34234234234234234,
-      "count": 333
     }
   ],
   "split": "held_out"

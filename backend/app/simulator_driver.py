@@ -175,12 +175,16 @@ def run_simulated_case(
             break
 
         if outcome.resolved and not outcome.recovered:
-            # Mirror of mark_recovered's own success update (app/lifecycle.py):
-            # a resolved-but-unrecovered cycle -- a failed executed
+            # A resolved-but-unrecovered cycle -- a failed executed
             # intervention, or a NO_ACTION cycle with no spontaneous recovery
-            # -- is a Bernoulli failure for that decision's cell. Without this
-            # the estimator only ever sees successes and beta never leaves
-            # cold start (ADR-0006's "beta += 1 on failure" was dead code).
+            # -- is a Bernoulli failure for that cycle's decision cell,
+            # attributed the same way mark_recovered attributes a success
+            # (app/lifecycle.py). Recorded once per failed cycle, not once
+            # per case: a case with N failed retries then a recovery
+            # contributes beta += N, alpha += 1 -- the most trials, so the
+            # fastest posterior convergence. Without this the estimator only
+            # ever saw successes and beta never left cold start (ADR-0006's
+            # "beta += 1 on failure" was specified but had no live caller).
             cell_key = resolve_last_decided_cell_key(case)
             if cell_key is not None:
                 get_estimator().update(cell_key, source=case.source, success=False)

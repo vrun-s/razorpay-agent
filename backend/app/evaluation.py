@@ -161,15 +161,12 @@ FIXED_RULE_DISCOUNT_PCT = 5.0
 _MAX_ARM_CYCLES = 10  # mirrors app/simulator_driver.py's own safety bound
 _NEUTRAL_QUALITY_SCORE = 0.5  # matches the estimator's own Beta(2,2) cold-start mean
 
-# ADR-0016: the eval harness's estimator collapses to a single non-trivial
-# cell (failure_reason and customer_segment_proxy are both constant across
-# every simulated case), so there is no cross-case quality signal to ration a
-# reserve on. A calibrated p-hat that converges below the allocator's
-# min-quality gate would strand the reserved third for the AI arm while
-# fixed_rule (fed a neutral 0.5) spends through -- an artefact of the
-# single-cell harness, not a real allocation decision. Run every arm
-# first-come-first-served instead. The live/demo path keeps
-# app/allocator.py's _DEFAULT_RESERVE_RATIO = 1/3 untouched.
+# ADR-0016: the harness's estimator collapses to one non-trivial cell, so
+# there is no cross-case quality signal to ration a reserve on -- a truthful
+# p-hat below the allocator's min-quality gate would only strand the AI arm's
+# reserved third while fixed_rule's hardcoded 0.5 spends through. Every arm
+# runs first-come-first-served. app/allocator.py's live/demo
+# _DEFAULT_RESERVE_RATIO = 1/3 is untouched.
 _EVAL_RESERVE_RATIO = 0.0
 
 
@@ -239,12 +236,13 @@ def run_fixed_rule_arm(
     live process-wide singleton) keeps this arm's spend isolated from every
     other arm's.
 
-    No Decision Engine estimate exists for this arm by definition, so the
-    Streaming Allocator's reserve-quality gate (app/allocator.py) is fed a
-    neutral point_estimate/uncertainty (0.5/0.0) -- the same "no
-    information" value the estimator's own cold start uses, with zero
-    claimed confidence since this is a fixed rule, not a probabilistic
-    estimate.
+    No Decision Engine estimate exists for this arm by definition, so its
+    allocation candidates carry a neutral point_estimate/uncertainty
+    (0.5/0.0) -- the same "no information" value the estimator's own cold
+    start uses. Under `_EVAL_RESERVE_RATIO = 0.0` (ADR-0016) the Streaming
+    Allocator's reserve-quality gate never runs for any arm, so that neutral
+    value no longer decides anything here; it is kept so this arm still
+    constructs a well-formed `AllocationCandidate` like every other.
     """
     intervention = _workflow_intervention(workflow_type)
     incentive_amount = round(case_value * FIXED_RULE_DISCOUNT_PCT / 100)

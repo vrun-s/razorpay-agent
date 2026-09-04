@@ -12,7 +12,7 @@ import random
 
 import pytest
 
-from app.estimator import CustomerSegmentProxy, Estimator, EstimatorCellKey, get_estimator
+from app.estimator import _COLD_START_BETA, CustomerSegmentProxy, Estimator, EstimatorCellKey, get_estimator
 from app.models import (
     CaseHistoryEntry,
     CaseHistoryEntryType,
@@ -96,8 +96,6 @@ def test_an_unrecovered_cycle_feeds_a_failure_back_into_the_estimator(session):
     stayed pinned at its Beta(2,2) cold start and p-hat could only ever
     climb. Driving a population with a non-saturated recovery rate must now
     push the retry cell's beta above cold start."""
-    from app.estimator import _COLD_START_BETA
-
     population = generate_population(seed=3, size=20)
 
     run_simulated_population(session, population, workflow_type=WorkflowType.FAILED_PAYMENT, rng=random.Random(3))
